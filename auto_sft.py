@@ -1,7 +1,6 @@
 """auto_sft.py — generate → extract → Z3-verify → append, all via Gemini API.
    Run: python auto_sft.py --target 2000"""
 import json, re, time, uuid, argparse, hashlib, os, random
-from collections import deque
 from datetime import datetime, timezone
 from google import genai
 from google.genai import types
@@ -9,13 +8,10 @@ from logic_validators import build_hybrid_schema
 from logic_pipeline import z3_solve
 
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-MODEL      = "gemini-3.5-flash"     # current free-tier Flash model
-SFT_OUT    = "sft_positives.jsonl" # output file; also doubles as the resume checkpoint
-BATCH_SIZE = 7                      # puzzles generated per batch
+MODEL      = "gemini-3.5-flash"
+SFT_OUT    = "sft_positives.jsonl"
+BATCH_SIZE = 7
 
-# Pool of entity names. We sample from this each batch so the model doesn't
-# default to Alice/Bob/Carol every time — surface-form variety helps the
-# extraction model generalize instead of memorizing specific names.
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
          "Quinn", "Rosa", "Sam", "Tara", "Uma", "Victor", "Wendy", "Xander",
@@ -57,6 +53,7 @@ Each answer choice is a claim about the solution, tagged with one modality:
   - could_be_true  (true in AT LEAST ONE valid solution)
   - must_be_false  (false in EVERY valid solution)
   - could_be_false (false in AT LEAST ONE valid solution)
+Across the batch, vary which modalities appear.
 
 === HARD RULES (every puzzle must satisfy ALL) ===
 1. Exactly ONE question per puzzle, with 3-4 labeled answer choices (A, B, C, D).
@@ -68,14 +65,10 @@ Each answer choice is a claim about the solution, tagged with one modality:
 5. Before outputting, mentally solve the puzzle to verify exactly one choice is correct.
    Vary WHICH letter is correct across puzzles — do not default to A.
 
-=== DIFFICULTY ESCALATION ===
-Produce a spread from easy to hard:
+=== DIFFICULTY ===
+Generate only easy and medium puzzles.
   - Easy: 3 entities, 2-3 flat constraints, single domain.
-  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper.
-  - Hard: 5-6 entities, 6+ constraints, nested wrappers (if_then containing and/or),
-    and some puzzles that MIX two or three domains (e.g. ordering + knights_and_knaves) (eg ordering + knights_and_knaves + grouping). - ensure that there are some puzzles where the different domains are independet of eachother in the problem - i.e. a knight statemnet only impacts whether or not another entity is a knight or a knave - and some puzzels where they are dependent on eachother - i.e. the differentiation between knight or knave determines if an entity goes before another entity which determines if it is in a certain group
-Across the full set, ensure EVERY primitive listed above appears in multiple puzzles,
-and every answer-choice modality (must/could × true/false) is exercised.
+  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, single domain.
 
 === OUTPUT FORMAT ===
 Return ONLY a JSON array, no prose. Each element:
@@ -83,10 +76,10 @@ Return ONLY a JSON array, no prose. Each element:
   "problem": "<full natural-language puzzle text including the question and the labeled answer choices>",
   "answer": "<correct choice label, e.g. 'C'>",
   "domains": ["<one or more of: ordering, knights_and_knaves, grouping>"],
-  "difficulty": "<easy|medium|hard>"
+  "difficulty": "<easy|medium>"
 }
 
-Generate __BATCH__ puzzles now. Keep them solvable and rule-compliant. Keep an even distribution across all the criteria I gave you."""
+Generate __BATCH__ puzzles now. Keep them solvable and rule-compliant."""
 
 EXTRACT_PROMPT = """You are a logic puzzle constraint extractor. I will give you logic puzzles as a JSON array. For each puzzle, produce one JSON object. Output ONLY a JSON array of all results — no prose, no markdown, no code blocks.
 
@@ -198,60 +191,30 @@ Correct output element:
 
 
 def call(prompt, temp):
-    """Send one prompt to Gemini and return the raw text response.
-    temp controls randomness: ~1.0 for generation (we want varied puzzles),
-    0.0 for extraction (we want deterministic, mechanical transcription).
-    max_output_tokens is set high so a full batch's JSON isn't truncated
-    mid-array — truncation would make parse() fail and lose the batch."""
     return client.models.generate_content(
         model=MODEL, contents=prompt,
         config=types.GenerateContentConfig(max_output_tokens=16000, temperature=temp),
     ).text
 
 def parse(text):
-    """Turn the model's text response into Python objects.
-    The regex strips any ```json ... ``` markdown fences the model adds
-    despite being told not to — json.loads() would choke on the backticks.
-    Then we parse the cleaned string into a list/dict."""
     return json.loads(re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip())
 
 def fp(text):
-    """Fingerprint: a short, normalized hash of a problem's text, used as a
-    fast O(1) key for duplicate detection in the `seen` set. Lowercasing and
-    collapsing whitespace first means trivial formatting differences don't
-    register as distinct problems. This is the hard guarantee that no exact
-    duplicate ever gets written to the output file."""
     return hashlib.sha1(re.sub(r"\s+", " ", text.lower()).strip().encode()).hexdigest()
 
 def is_quota_error(err):
-    """True if the exception looks like a rate-limit / quota error (HTTP 429).
-    Used to decide whether to wait-and-retry vs. just skip the batch."""
     msg = str(err).upper()
     return "429" in msg or "RESOURCE_EXHAUSTED" in msg
 
-def build_seed(recent):
-    """Build the per-batch suffix appended to the generation prompt.
-    Randomized names + difficulty/domain hints scatter each batch into a
-    different region of the puzzle space (reduces wasted duplicate generation).
-    The `recent` list is a soft 'don't repeat these' nudge — it's capped by
-    the deque so the prompt never grows with the corpus."""
-    names = random.sample(NAMES, k=6)
-    hint = (f"\n\nFor THIS batch: draw entity names only from {names}.  You are allowed to use 2-6 entities."
-            f"Aim for ~50% easy, ~50% medium. Vary which letter is correct and the domain mix.")
-    if recent:
-        hint += "\nDo NOT reproduce any of these recent problems:\n" + "\n".join(recent)
-    return hint
+def build_seed(names):
+    return (f"\n\nFor THIS batch: draw entity names only from {names}. "
+            f"You may use 2-6 entities per puzzle. "
+            f"Vary which letter is correct and the domain across the {BATCH_SIZE} puzzles.")
 
 def verify_one(row):
-    """Z3 filter — the source of truth. Returns a ready-to-write dict if the
-    extraction is valid, else None. Checks three things:
-      1. the constraints are satisfiable (status == sat),
-      2. exactly one answer choice resolves true,
-      3. that choice matches the answer label the generator claimed.
-    Anything failing these is dropped, so bad extractions never reach the file."""
     domains   = row["active_domains"] if isinstance(row["active_domains"], list) else json.loads(row["active_domains"])
     ext_obj   = row["extracted_json"] if isinstance(row["extracted_json"], dict) else json.loads(row["extracted_json"])
-    extracted = build_hybrid_schema(domains)(**ext_obj)   # build the per-domain Pydantic schema, then validate
+    extracted = build_hybrid_schema(domains)(**ext_obj)
     res       = z3_solve(extracted)
     if res["status"] != "sat": return None
     verified = [l for l, v in res["question_results"][0].items() if v]
@@ -262,60 +225,48 @@ def verify_one(row):
             "timestamp": datetime.now(timezone.utc).isoformat()}
 
 def main(target):
-    # `seen` = hashes of every problem already saved (dedup guarantee).
-    # `recent` = last BATCH_SIZE*2 problem texts, fed back as a don't-repeat hint.
-    seen, recent = set(), deque(maxlen=BATCH_SIZE * 2)
-
-    # Resume support: reload hashes from any existing output so a re-run
-    # continues where it left off instead of regenerating from scratch.
+    seen = set()
     try:
         for line in open(SFT_OUT):
             seen.add(fp(json.loads(line)["problem_text"]))
     except FileNotFoundError:
         pass
-    kept          = len(seen)   # count toward target includes already-saved rows
-    quota_strikes = 0           # consecutive rate-limit hits; 5 in a row => stop
+    kept          = len(seen)
+    quota_strikes = 0
 
     while kept < target:
-        # Insert BATCH_SIZE into the prompt (token replace, not f-string,
-        # because the prompt is full of literal {} braces) and append the seed.
-        gen_prompt = GEN_PROMPT.replace("__BATCH__", str(BATCH_SIZE)) + build_seed(list(recent))
+        names      = random.sample(NAMES, k=6)
+        gen_prompt = GEN_PROMPT.replace("__BATCH__", str(BATCH_SIZE)) + build_seed(names)
         try:
-            puzzles        = parse(call(gen_prompt, 1.0)); time.sleep(5)   # step 1: generate NL puzzles
-            extract_prompt = EXTRACT_PROMPT + "\n" + json.dumps(puzzles)   # puzzles appended after the header
-            extracted      = parse(call(extract_prompt, 0.0)); time.sleep(5)  # step 2: extract to constraint JSON
-            quota_strikes  = 0                                            # clean batch — reset strike counter
+            puzzles        = parse(call(gen_prompt, 1.0));               time.sleep(5)
+            extract_prompt = EXTRACT_PROMPT + "\n" + json.dumps(puzzles)
+            extracted      = parse(call(extract_prompt, 0.0));           time.sleep(5)
+            quota_strikes  = 0
         except Exception as err:
-            # Rate-limit: wait and retry. A per-minute limit clears in 60s;
-            # 5 strikes in a row means the daily quota is gone, so stop cleanly.
             if is_quota_error(err):
                 quota_strikes += 1
                 if quota_strikes >= 5:
-                    print(f"Rate-limited 5x in a row — daily quota likely exhausted. Stopping.")
-                    print(f"{kept} examples saved in {SFT_OUT}. Re-run later to resume.")
+                    print(f"Daily quota likely exhausted. {kept} saved. Re-run tomorrow.")
                     break
-                print(f"Rate limited ({quota_strikes}/5) — waiting 60s before retry.")
+                print(f"Rate limited ({quota_strikes}/5) — waiting 60s.")
                 time.sleep(60)
             else:
-                # Any other error (bad JSON, truncation, network) — skip this batch.
-                print(f"batch failed ({type(err).__name__}: {err}) — skipping batch.")
+                print(f"Batch failed ({type(err).__name__}: {err}) — skipping.")
                 time.sleep(5)
             continue
 
-        # Verify and append each extracted puzzle individually.
         for row in extracted:
             h = fp(row.get("problem_text", ""))
-            if h in seen:               # already have this exact problem — skip
+            if h in seen:
                 continue
             try:
-                out = verify_one(row)   # Z3 check
+                out = verify_one(row)
             except Exception:
-                out = None              # malformed row — treat as a drop
+                out = None
             if out:
-                with open(SFT_OUT, "a") as f:   # append-only; never rewrites the file
+                with open(SFT_OUT, "a") as f:
                     f.write(json.dumps(out) + "\n")
                 seen.add(h)
-                recent.append(row["problem_text"])
                 kept += 1
         print(f"kept {kept}/{target}")
 
