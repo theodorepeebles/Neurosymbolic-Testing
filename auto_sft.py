@@ -4,14 +4,17 @@ import json, re, time, uuid, argparse, hashlib, os, random
 from datetime import datetime, timezone
 from google import genai
 from google.genai import types
-from logic_validators import build_hybrid_schema
-from logic_pipeline import z3_solve
+from validators import build_hybrid_schema
+from pipeline import z3_solve
 
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL      = "gemini-3.5-flash"
-SFT_OUT    = "sft_positives.jsonl"
-BATCH_SIZE = 7
+SFT_OUT    = "sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
+BATCH_SIZE = 7                       # puzzles generated per batch
 
+# Pool of entity names. We sample from this each batch so the model doesn't
+# default to Alice/Bob/Carol every time — surface-form variety helps the
+# extraction model generalize instead of memorizing specific names.
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
          "Quinn", "Rosa", "Sam", "Tara", "Uma", "Victor", "Wendy", "Xander",
@@ -191,30 +194,55 @@ Correct output element:
 
 
 def call(prompt, temp):
+    """Send one prompt to Gemini and return the raw text response.
+    temp controls randomness: 1.0 for generation (want varied puzzles),
+    0.0 for extraction (want deterministic, mechanical transcription).
+    max_output_tokens is set high so a full batch's JSON isn't truncated
+    mid-array — truncation would make parse() throw and lose the whole batch."""
     return client.models.generate_content(
         model=MODEL, contents=prompt,
         config=types.GenerateContentConfig(max_output_tokens=16000, temperature=temp),
     ).text
 
 def parse(text):
+    """Turn the model's text response into Python objects.
+    The regex strips any ```json ... ``` markdown fences the model adds
+    despite being told not to — json.loads() would choke on the backticks.
+    Then we parse the cleaned string into a list/dict."""
     return json.loads(re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip())
 
 def fp(text):
+    """Fingerprint: a short normalized hash of a problem's text, used as a
+    fast O(1) key for duplicate detection in the `seen` set. Lowercasing and
+    collapsing whitespace first means trivial formatting differences don't
+    register as distinct problems. This is the hard guarantee that no exact
+    duplicate ever gets written to the output file."""
     return hashlib.sha1(re.sub(r"\s+", " ", text.lower()).strip().encode()).hexdigest()
 
 def is_quota_error(err):
+    """True if the exception looks like a rate-limit / quota error (HTTP 429).
+    Used to decide whether to wait-and-retry vs. just skip the batch."""
     msg = str(err).upper()
     return "429" in msg or "RESOURCE_EXHAUSTED" in msg
 
 def build_seed(names):
+    """Build the per-batch suffix appended to the generation prompt.
+    Randomized names scatter each batch into a different region of the puzzle
+    space, reducing wasted duplicate generation without growing the prompt."""
     return (f"\n\nFor THIS batch: draw entity names only from {names}. "
             f"You may use 2-6 entities per puzzle. "
             f"Vary which letter is correct and the domain across the {BATCH_SIZE} puzzles.")
 
 def verify_one(row):
+    """Z3 filter — the source of truth. Returns a ready-to-write dict if the
+    extraction is valid, else None. Checks three things:
+      1. the constraints are satisfiable (status == sat),
+      2. exactly one answer choice resolves true,
+      3. that choice matches the answer label the generator claimed.
+    Anything failing these is dropped — bad extractions never reach the file."""
     domains   = row["active_domains"] if isinstance(row["active_domains"], list) else json.loads(row["active_domains"])
     ext_obj   = row["extracted_json"] if isinstance(row["extracted_json"], dict) else json.loads(row["extracted_json"])
-    extracted = build_hybrid_schema(domains)(**ext_obj)
+    extracted = build_hybrid_schema(domains)(**ext_obj)  # build per-domain Pydantic schema, then validate
     res       = z3_solve(extracted)
     if res["status"] != "sat": return None
     verified = [l for l, v in res["question_results"][0].items() if v]
@@ -225,24 +253,33 @@ def verify_one(row):
             "timestamp": datetime.now(timezone.utc).isoformat()}
 
 def main(target):
+    # `seen` = hashes of every problem already saved (dedup guarantee).
     seen = set()
+
+    # Resume support: reload hashes from any existing output so a re-run
+    # continues where it left off instead of regenerating from scratch.
     try:
         for line in open(SFT_OUT):
             seen.add(fp(json.loads(line)["problem_text"]))
     except FileNotFoundError:
         pass
-    kept          = len(seen)
-    quota_strikes = 0
+
+    kept          = len(seen)  # count toward target includes already-saved rows
+    quota_strikes = 0          # consecutive rate-limit hits; 5 in a row => stop
 
     while kept < target:
-        names      = random.sample(NAMES, k=6)
+        names = random.sample(NAMES, k=6)
+        # Insert BATCH_SIZE into the prompt (token replace, not f-string,
+        # because the prompt is full of literal {} braces that would break formatting).
         gen_prompt = GEN_PROMPT.replace("__BATCH__", str(BATCH_SIZE)) + build_seed(names)
         try:
-            puzzles        = parse(call(gen_prompt, 1.0));               time.sleep(5)
-            extract_prompt = EXTRACT_PROMPT + "\n" + json.dumps(puzzles)
-            extracted      = parse(call(extract_prompt, 0.0));           time.sleep(5)
-            quota_strikes  = 0
+            puzzles        = parse(call(gen_prompt, 1.0));               time.sleep(5)   # step 1: generate NL puzzles
+            extract_prompt = EXTRACT_PROMPT + "\n" + json.dumps(puzzles)                 # puzzles appended after the header
+            extracted      = parse(call(extract_prompt, 0.0));           time.sleep(5)   # step 2: extract to constraint JSON
+            quota_strikes  = 0                                                            # clean batch — reset strike counter
         except Exception as err:
+            # Rate-limit: wait and retry. A per-minute limit clears in 60s;
+            # 5 strikes in a row means the daily quota is gone, so stop cleanly.
             if is_quota_error(err):
                 quota_strikes += 1
                 if quota_strikes >= 5:
@@ -251,20 +288,22 @@ def main(target):
                 print(f"Rate limited ({quota_strikes}/5) — waiting 60s.")
                 time.sleep(60)
             else:
+                # Any other error (bad JSON, truncation, network) — skip this batch.
                 print(f"Batch failed ({type(err).__name__}: {err}) — skipping.")
                 time.sleep(5)
             continue
 
+        # Verify and append each extracted puzzle individually.
         for row in extracted:
             h = fp(row.get("problem_text", ""))
-            if h in seen:
+            if h in seen:               # already have this exact problem — skip
                 continue
             try:
-                out = verify_one(row)
+                out = verify_one(row)   # Z3 check
             except Exception:
-                out = None
+                out = None              # malformed row — treat as a drop
             if out:
-                with open(SFT_OUT, "a") as f:
+                with open(SFT_OUT, "a") as f:  # append-only; never rewrites the file
                     f.write(json.dumps(out) + "\n")
                 seen.add(h)
                 kept += 1
