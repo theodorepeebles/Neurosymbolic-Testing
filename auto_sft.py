@@ -2,6 +2,7 @@
    Run: python auto_sft.py --target 2000"""
 import json, re, time, uuid, argparse, hashlib, os, random
 from datetime import datetime, timezone
+from time import perf_counter
 from google import genai
 from google.genai import types
 from validators import build_hybrid_schema
@@ -9,7 +10,7 @@ from pipeline import z3_solve
 
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL      = "gemini-3.5-flash"
-SFT_OUT    = "sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
+SFT_OUT    = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
 BATCH_SIZE = 7                       # puzzles generated per batch
 
 # Pool of entity names. We sample from this each batch so the model doesn't
@@ -252,6 +253,10 @@ def verify_one(row):
             "model_name": row.get("model_name", "gemini"),
             "timestamp": datetime.now(timezone.utc).isoformat()}
 
+def fmt_elapsed(seconds):
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m {s}s" if m else f"{s}s"
+
 def main(target):
     # `seen` = hashes of every problem already saved (dedup guarantee).
     seen = set()
@@ -266,9 +271,13 @@ def main(target):
 
     kept          = len(seen)  # count toward target includes already-saved rows
     quota_strikes = 0          # consecutive rate-limit hits; 5 in a row => stop
+    start_time    = perf_counter()
+
+    print(f"Starting — batch size: {BATCH_SIZE} | already saved: {kept} | target: {target}")
 
     while kept < target:
         names = random.sample(NAMES, k=6)
+        batch_start = perf_counter()
         # Insert BATCH_SIZE into the prompt (token replace, not f-string,
         # because the prompt is full of literal {} braces that would break formatting).
         gen_prompt = GEN_PROMPT.replace("__BATCH__", str(BATCH_SIZE)) + build_seed(names)
@@ -285,15 +294,16 @@ def main(target):
                 if quota_strikes >= 5:
                     print(f"Daily quota likely exhausted. {kept} saved. Re-run tomorrow.")
                     break
-                print(f"Rate limited ({quota_strikes}/5) — waiting 60s.")
+                print(f"Rate limited ({quota_strikes}/5) — waiting 60s. [{fmt_elapsed(perf_counter() - start_time)} elapsed]")
                 time.sleep(60)
             else:
                 # Any other error (bad JSON, truncation, network) — skip this batch.
-                print(f"Batch failed ({type(err).__name__}: {err}) — skipping.")
+                print(f"Batch failed ({type(err).__name__}: {err}) — skipping. [{fmt_elapsed(perf_counter() - start_time)} elapsed]")
                 time.sleep(5)
             continue
 
         # Verify and append each extracted puzzle individually.
+        kept_before = kept
         for row in extracted:
             h = fp(row.get("problem_text", ""))
             if h in seen:               # already have this exact problem — skip
@@ -307,7 +317,10 @@ def main(target):
                     f.write(json.dumps(out) + "\n")
                 seen.add(h)
                 kept += 1
-        print(f"kept {kept}/{target}")
+        batch_kept = kept - kept_before
+        elapsed = fmt_elapsed(perf_counter() - start_time)
+        batch_elapsed = fmt_elapsed(perf_counter() - batch_start)
+        print(f"batch: {batch_kept}/{BATCH_SIZE} kept  |  total: {kept}/{target}  |  batch {batch_elapsed}  |  elapsed {elapsed}")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
