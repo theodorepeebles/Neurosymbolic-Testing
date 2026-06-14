@@ -11,7 +11,7 @@ from pipeline import z3_solve
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL      = "gemini-3.5-flash"
 SFT_OUT    = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
-BATCH_SIZE = 7                       # puzzles generated per batch
+BATCH_SIZE = 25                      # puzzles generated per batch
 
 # Pool of entity names. We sample from this each batch so the model doesn't
 # default to Alice/Bob/Carol every time — surface-form variety helps the
@@ -194,15 +194,13 @@ Correct output element:
 === INPUT PUZZLES ==="""
 
 
-def call(prompt, temp):
+def call(prompt):
     """Send one prompt to Gemini and return the raw text response.
-    temp controls randomness: 1.0 for generation (want varied puzzles),
-    0.0 for extraction (want deterministic, mechanical transcription).
     max_output_tokens is set high so a full batch's JSON isn't truncated
     mid-array — truncation would make parse() throw and lose the whole batch."""
     return client.models.generate_content(
         model=MODEL, contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=16000, temperature=temp),
+        config=types.GenerateContentConfig(max_output_tokens=32000),
     ).text
 
 def parse(text):
@@ -282,9 +280,9 @@ def main(target):
         # because the prompt is full of literal {} braces that would break formatting).
         gen_prompt = GEN_PROMPT.replace("__BATCH__", str(BATCH_SIZE)) + build_seed(names)
         try:
-            puzzles        = parse(call(gen_prompt, 1.0));               time.sleep(5)   # step 1: generate NL puzzles
+            puzzles        = parse(call(gen_prompt));                     time.sleep(5)   # step 1: generate NL puzzles
             extract_prompt = EXTRACT_PROMPT + "\n" + json.dumps(puzzles)                 # puzzles appended after the header
-            extracted      = parse(call(extract_prompt, 0.0));           time.sleep(5)   # step 2: extract to constraint JSON
+            extracted      = parse(call(extract_prompt));                time.sleep(5)   # step 2: extract to constraint JSON
             quota_strikes  = 0                                                            # clean batch — reset strike counter
         except Exception as err:
             # Rate-limit: wait and retry. A per-minute limit clears in 60s;
