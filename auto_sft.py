@@ -11,7 +11,7 @@ from pipeline import z3_solve
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL      = "gemini-3.5-flash"
 SFT_OUT    = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
-BATCH_SIZE = 25                      # puzzles generated per batch
+BATCH_SIZE = 5                      # puzzles generated per batch
 
 # Pool of entity names. We sample from this each batch so the model doesn't
 # default to Alice/Bob/Carol every time — surface-form variety helps the
@@ -191,6 +191,8 @@ Correct output element:
 5. Do not invent constraint types outside the vocabulary above.
 6. num_slots, num_groups, group_sizes: include only for the relevant domain.
 
+Output COMPACT minified JSON on a single line — no newlines, no indentation.
+
 === INPUT PUZZLES ==="""
 
 
@@ -201,6 +203,8 @@ def call(prompt):
     return client.models.generate_content(
         model=MODEL, contents=prompt,
         config=types.GenerateContentConfig(max_output_tokens=32000),
+        thinking_config=types.ThinkingConfig(thinking_level="minimal"),
+        response_mime_type="application/json",
     ).text
 
 def parse(text):
