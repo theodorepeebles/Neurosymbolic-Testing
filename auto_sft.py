@@ -11,7 +11,7 @@ from pipeline import z3_solve
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL      = "gemini-3.5-flash"
 SFT_OUT    = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
-BATCH_SIZE = 5                      # puzzles generated per batch
+BATCH_SIZE = 15                      # puzzles generated per batch
 
 # Pool of entity names. We sample from this each batch so the model doesn't
 # default to Alice/Bob/Carol every time — surface-form variety helps the
