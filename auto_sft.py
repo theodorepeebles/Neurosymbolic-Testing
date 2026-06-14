@@ -9,9 +9,9 @@ from validators import build_hybrid_schema
 from pipeline import z3_solve
 
 client     = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-MODEL      = "gemini-3.5-flash"
+MODEL      = "gemini-3.1-flash-lite"
 SFT_OUT    = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
-BATCH_SIZE = 15                      # puzzles generated per batch
+BATCH_SIZE = 3                      # puzzles generated per batch
 
 # Pool of entity names. We sample from this each batch so the model doesn't
 # default to Alice/Bob/Carol every time — surface-form variety helps the
@@ -201,10 +201,13 @@ def call(prompt):
     max_output_tokens is set high so a full batch's JSON isn't truncated
     mid-array — truncation would make parse() throw and lose the whole batch."""
     return client.models.generate_content(
-        model=MODEL, contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=32000),
-        thinking_config=types.ThinkingConfig(thinking_level="minimal"),
-        response_mime_type="application/json",
+        model=MODEL, 
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            max_output_tokens=64000,
+            thinking_config=types.ThinkingConfig(thinking_level="low"),
+            response_mime_type="application/json"
+        )
     ).text
 
 def parse(text):
