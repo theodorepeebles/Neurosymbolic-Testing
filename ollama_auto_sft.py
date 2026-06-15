@@ -9,7 +9,7 @@ GENERATION_MODEL     = "gpt-oss:120b-cloud"
 CLASSIFICATION_MODEL = "gemma4:31b-cloud"
 EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
 SFT_OUT    = "../data/sft_positives.jsonl"
-BATCH_SIZE = 5
+BATCH_SIZE = 6
 
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
@@ -65,9 +65,10 @@ Across the batch, vary which modalities appear.
    Vary WHICH letter is correct across puzzles — do not default to A.
 
 === DIFFICULTY ===
-Generate only easy and medium puzzles.
-  - Easy: 3 entities, 2-3 flat constraints, single domain.
-  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, single domain.
+Generate a mix of easy, medium, and hard puzzles.
+  - Easy:   3 entities, 2-3 flat constraints, 1 domain.
+  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, 1-2 domains.
+  - Hard:   5-6 entities, 6-9 constraints, not/or/if_then wrappers used freely, 2-3 domains.
 
 === OUTPUT FORMAT ===
 Return ONLY a JSON array, no prose. Each element:
@@ -75,7 +76,7 @@ Return ONLY a JSON array, no prose. Each element:
   "problem": "<full natural-language puzzle text including the question and the labeled answer choices>",
   "answer": "<correct choice label, e.g. 'C'>",
   "domains": ["<one or more of: ordering, knights_and_knaves, grouping>"],
-  "difficulty": "<easy|medium>"
+  "difficulty": "<easy|medium|hard>"
 }"""
 
 
@@ -87,7 +88,7 @@ def call_gen(names):
     but does NOT enforce any particular schema — we just need a well-formed array here.
     Contrast with extraction inside run_ns_pipeline, where fmt=LogicProblem.model_json_schema()
     passes the full Pydantic schema so Ollama is constrained to that exact structure."""
-    prompt = (f"Generate {BATCH_SIZE} puzzles now. Keep them solvable and rule-compliant."
+    prompt = (f"Generate {BATCH_SIZE} puzzles now: exactly 2 easy, 2 medium, and 2 hard. Keep them solvable and rule-compliant."
               + build_seed(names))
     raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=GENERATION_MODEL, think=False)
     return parse(raw)
