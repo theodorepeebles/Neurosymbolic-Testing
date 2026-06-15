@@ -7,7 +7,7 @@ from collections import Counter
 from validators import DOMAIN_CONSTRAINT_CLASSES, build_hybrid_schema
 
 
-def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False) -> str:
+def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     Returns:
@@ -24,15 +24,15 @@ def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen
         body["format"] = fmt
 
     try:
-        response = requests.post("http://localhost:11434/api/generate", json=body, timeout=150)
-        
+        response = requests.post("http://localhost:11434/api/generate", json=body, timeout=timeout)
+
         # This forces an exception if Ollama returns a 500 Internal Server Error
-        response.raise_for_status() 
-        
+        response.raise_for_status()
+
         return response.json()["response"].strip()
-        
+
     except requests.exceptions.Timeout:
-        raise RuntimeError("Ollama API timed out after 150 seconds. The server might be hung.")
+        raise RuntimeError(f"Ollama API timed out after {timeout} seconds. The server might be hung.")
     except requests.exceptions.ConnectionError:
         raise RuntimeError("Could not connect to Ollama. Did the server crash?")
     except requests.exceptions.RequestException as e:
