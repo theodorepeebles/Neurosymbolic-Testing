@@ -8,18 +8,28 @@ from pipeline import ask_llm, extract_logic_problem, classify_domains, z3_solve,
 GENERATION_MODEL     = "gpt-oss:120b-cloud"
 CLASSIFICATION_MODEL = "gemma4:31b-cloud"
 EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
-SFT_OUT    = "../data/sft_positives.jsonl"
-BATCH_SIZE = 6
+SFT_OUT        = "../data/sft_positives.jsonl"
+INCLUDE_EASY   = True
+INCLUDE_MEDIUM = True
+INCLUDE_HARD   = True
+
+_DIFFICULTY_SPECS = {
+    "easy":   "  - Easy:   3 entities, 2-3 flat constraints, 1 domain.",
+    "medium": "  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, 1-2 domains.",
+    "hard":   "  - Hard:   5-6 entities, 6-9 constraints, not/or/if_then wrappers used freely, 2-3 domains.",
+}
+_ACTIVE = [d for d, on in [("easy", INCLUDE_EASY), ("medium", INCLUDE_MEDIUM), ("hard", INCLUDE_HARD)] if on]
+BATCH_SIZE = len(_ACTIVE) * 3
 
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
          "Quinn", "Rosa", "Sam", "Tara", "Uma", "Victor", "Wendy", "Xander",
          "Yara", "Zane", "Aria", "Theo", "Lena", "Cyrus"]
 
-GEN_SYSTEM = """You are generating a benchmark of logic puzzles for an automated solver. The solver
+GEN_SYSTEM = f"""You are generating a benchmark of logic puzzles for an automated solver. The solver
 encodes each puzzle into a fixed constraint vocabulary and verifies it with the Z3 SMT
 solver. Therefore EVERY puzzle you generate MUST be fully expressible using ONLY the
-primitives below. Do not invent relationships outside this vocabulary. 
+primitives below. Do not invent relationships outside this vocabulary.
 
 === DOMAINS AND EXACT VOCABULARY ===
 
@@ -65,19 +75,17 @@ Across the batch, vary which modalities appear.
    Vary WHICH letter is correct across puzzles — do not default to A.
 
 === DIFFICULTY ===
-Generate a mix of easy, medium, and hard puzzles.
-  - Easy:   3 entities, 2-3 flat constraints, 1 domain.
-  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, 1-2 domains.
-  - Hard:   5-6 entities, 6-9 constraints, not/or/if_then wrappers used freely, 2-3 domains.
+Generate a mix of {", ".join(_ACTIVE)} puzzles.
+{chr(10).join(_DIFFICULTY_SPECS[d] for d in _ACTIVE)}
 
 === OUTPUT FORMAT ===
 Return ONLY a JSON array, no prose. Each element:
-{
+{{
   "problem": "<full natural-language puzzle text including the question and the labeled answer choices>",
   "answer": "<correct choice label, e.g. 'C'>",
   "domains": ["<one or more of: ordering, knights_and_knaves, grouping>"],
-  "difficulty": "<easy|medium|hard>"
-}"""
+  "difficulty": "<{'|'.join(_ACTIVE)}>"
+}}"""
 
 
 def call_gen(names):
@@ -88,9 +96,9 @@ def call_gen(names):
     but does NOT enforce any particular schema — we just need a well-formed array here.
     Contrast with extraction inside run_ns_pipeline, where fmt=LogicProblem.model_json_schema()
     passes the full Pydantic schema so Ollama is constrained to that exact structure."""
-    prompt = (f"Generate {BATCH_SIZE} puzzles now: exactly 2 easy, 2 medium, and 2 hard. Keep them solvable and rule-compliant."
+    prompt = (f"Generate {BATCH_SIZE} puzzles now, split evenly across difficulties: {', '.join(_ACTIVE)}. Keep them solvable and rule-compliant."
               + build_seed(names))
-    raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=GENERATION_MODEL, think=False)
+    raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=GENERATION_MODEL, think=False, timeout=400)
     return parse(raw)
 
 
