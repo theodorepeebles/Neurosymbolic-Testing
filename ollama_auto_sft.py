@@ -3,9 +3,9 @@
 import json, re, time, uuid, argparse, hashlib, random
 from datetime import datetime, timezone
 from time import perf_counter
-from pipeline import ask_llm, run_ns_pipeline, extract_logic_problem
+from pipeline import ask_llm, extract_logic_problem, classify_domains, z3_solve, build_hybrid_schema
 
-MODEL      = "gemma4:31b-cloud"
+MODEL      = "gpt-oss:120b-cloud"
 SFT_OUT    = "../data/sft_positives.jsonl"
 BATCH_SIZE = 5
 
@@ -132,6 +132,39 @@ def fmt_elapsed(seconds):
     return f"{m}m {s}s" if m else f"{s}s"
 
 
+def run_extract_pipeline(problem_text):
+    """Classify → extract → Z3-verify using MODEL. No formatting, no UNSAT retry."""
+    try:
+        print(f"  Classifying domains...")
+        t0 = perf_counter()
+        active_domains = classify_domains(problem_text, model=MODEL)
+        print(f"  Domains: {active_domains} ({perf_counter() - t0:.2f}s)")
+
+        LogicProblem = build_hybrid_schema(active_domains)
+
+        print(f"  Waiting for LLM extraction...")
+        t1 = perf_counter()
+        extracted, _, _ = extract_logic_problem(problem_text, active_domains, LogicProblem, model=MODEL)
+        print(f"  Got extraction response ({perf_counter() - t1:.2f}s)")
+
+        if extracted is None:
+            return {"z3_status": None, "question_results": None, "extracted": None, "active_domains": active_domains}
+
+        z3_result = z3_solve(extracted)
+        print(f"  Z3 status         : {z3_result['status']}")
+        print(f"  Question results  : {z3_result.get('question_results')}")
+
+        return {
+            "z3_status":        z3_result["status"],
+            "question_results": z3_result.get("question_results"),
+            "extracted":        extracted,
+            "active_domains":   active_domains,
+        }
+    except RuntimeError as e:
+        print(f"  [!] Pipeline error: {e}")
+        return {"z3_status": None, "question_results": None, "extracted": None, "active_domains": []}
+
+
 def main(target):
     seen = set()
     try:
@@ -164,7 +197,7 @@ def main(target):
             if h in seen:
                 continue
             try:
-                result = run_ns_pipeline(problem_text, extract_logic_problem)
+                result = run_extract_pipeline(problem_text)
                 out    = verify_one(puzzle, result)
             except Exception:
                 out = None

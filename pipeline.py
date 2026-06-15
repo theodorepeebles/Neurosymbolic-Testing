@@ -51,8 +51,8 @@ ACTIVE_DOMAINS: <comma-separated, no spaces>
 
 Example: ACTIVE_DOMAINS: ordering,knights_and_knaves"""
 
-def classify_domains(problem_text: str) -> list[str]:
-    response = ask_llm(prompt=problem_text, system=CLASSIFIER_SYSTEM, think=False)
+def classify_domains(problem_text: str, model: str = "qwen3:8b") -> list[str]:
+    response = ask_llm(prompt=problem_text, system=CLASSIFIER_SYSTEM, think=False, model=model)
 
     # Scan from the end — guards against "ACTIVE_DOMAINS" appearing in reasoning trace
     domains = None
@@ -116,7 +116,8 @@ def extract_logic_problem(
     problem_text: str,
     active_domains,
     LogicProblem: type,
-    unsat_context: str = None
+    unsat_context: str = None,
+    model: str = "qwen3:8b"
 ) -> tuple:
 
 
@@ -133,11 +134,19 @@ def extract_logic_problem(
 
     for attempt in range(MAX_ATTEMPTS):
 
-        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model="qwen3:8b")
+        # fmt=schema: for local models this enforces grammar-based constrained generation
+        # (every token hard-filtered, raw JSON guaranteed). For cloud-routed models
+        # (e.g. gemma4:31b-cloud) Ollama proxies to a remote API that doesn't support
+        # grammar constraints — the schema is passed as a soft hint only, so the model
+        # may still wrap output in markdown fences or add prose. Strip fences before
+        # json.loads (see `cleaned` below). This is not documented by Ollama explicitly;
+        # confirmed empirically by observing fence-wrapped responses from cloud models.
+        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model)
         attempts_used += 1
 
         try:
-            parsed = json.loads(raw)
+            cleaned = re.sub(r"^```(json)?\s*|```$", "", raw.strip(), flags=re.M).strip()
+            parsed = json.loads(cleaned)
 
             logic_prob = LogicProblem(**parsed)
 
@@ -629,6 +638,8 @@ def _handle_unsat_retry(
 
 
 def run_ns_pipeline(problem: str, extract_fn) -> dict:
+    # TODO: add model params (classify_model, extract_model, format_model) —
+    # currently relies on qwen3:8b defaults in classify_domains and extract_logic_problem
     result = {
         "extracted":        None,
         "question_results": None,
