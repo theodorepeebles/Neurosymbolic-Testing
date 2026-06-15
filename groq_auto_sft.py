@@ -24,7 +24,7 @@ _DIFFICULTY_SPECS = {
     "medium": "  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, 1-2 domains.",
     "hard":   "  - Hard:   5-6 entities, 6-9 constraints, not/or/if_then wrappers used freely, 2-3 domains.",
 }
-BATCH_SIZE = 1
+BATCH_SIZE = 3
 
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
