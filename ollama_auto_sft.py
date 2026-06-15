@@ -10,8 +10,8 @@ CLASSIFICATION_MODEL = "gemma4:31b-cloud"
 EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
 SFT_OUT        = "../data/sft_positives.jsonl"
 INCLUDE_EASY   = False
-INCLUDE_MEDIUM = True
-INCLUDE_HARD   = False
+INCLUDE_MEDIUM = False
+INCLUDE_HARD   = True
 
 _DIFFICULTY_SPECS = {
     "easy":   "  - Easy:   3 entities, 2-3 flat constraints, 1 domain.",
@@ -222,6 +222,8 @@ def main(target):
         batch_elapsed = fmt_elapsed(perf_counter() - batch_start)
         print(f"batch: {batch_kept}/{BATCH_SIZE} kept  |  total: {kept}/{target}  |  "
               f"batch {batch_elapsed}  |  elapsed {elapsed}")
+        if kept < target:
+            time.sleep(5)
 
 
 if __name__ == "__main__":
