@@ -1,5 +1,39 @@
 """groq_auto_sft.py — generate → extract → Z3-verify → append, via Groq API.
-   Run: python groq_auto_sft.py --target 2000"""
+   Run: python groq_auto_sft.py --target 2000
+
+=== CONSTRAINED OUTPUT ATTEMPTS (all failed, documented for future reference) ===
+
+PROBLEM: model intermittently returns empty responses, causing:
+  JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+ROOT CAUSE (confirmed): max_tokens=16384 was being counted as a TPM reservation by Groq
+  upfront, exhausting the free-tier 6000 TPM limit before any tokens were generated.
+  Fix: reduced to max_tokens=4096 (gen) and max_tokens=8192 (extract).
+  After this fix, llama-3.3-70b-versatile ran cleanly in testing with BATCH_SIZE=1.
+
+ATTEMPT 1 — response_format={"type": "json_object"}
+  Requires top-level output to be {}. Our prompts output [], so Groq's validator
+  rejected it: BadRequestError 400 json_validate_failed, failed_generation: ''
+
+ATTEMPT 2 — response_format={"type": "json_schema", "json_schema": ...} strict=True
+  Switched model to openai/gpt-oss-120b (Groq lists GPT-OSS 120B as supporting
+  strict json_schema). Changed both prompts to wrap output in {"items": [...]} and
+  used schema {"type":"object","properties":{"items":{"type":"array"}},...}.
+  Same error: BadRequestError 400 json_validate_failed, failed_generation: ''
+  Likely causes: (a) "items" clashes with the JSON Schema "items" keyword, or
+  (b) openai/gpt-oss-120b is not the correct Groq model ID — verify with:
+    curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
+  If retrying: use a non-conflicting key like "results" instead of "items".
+
+ATTEMPT 3 — retry on empty response inside call() without response_format
+  Removed response_format. Added retry loop (3 attempts, 5s sleep) checking if
+  response content is empty. Avoids 400 errors but doesn't prevent empty responses.
+  User reverted (git restore) — this is the current state.
+
+CUSTOM SCHEMA NOTE: build_hybrid_schema() (HybridConstraint Pydantic schema) is NOT
+  viable for json_schema mode — it uses anyOf (discriminated unions) and recursive
+  $ref types, both unsupported by Groq strict mode.
+"""
 import json, re, time, uuid, argparse, hashlib, os, random
 from datetime import datetime, timezone
 from time import perf_counter
@@ -12,8 +46,8 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-GENERATION_MODEL = "llama-3.3-70b-versatile"
-EXTRACTION_MODEL = "llama-3.3-70b-versatile"
+GENERATION_MODEL = "openai/gpt-oss-120b"
+EXTRACTION_MODEL = "openai/gpt-oss-120b"
 SFT_OUT          = "../data/sft_positives.jsonl"
 INCLUDE_EASY     = True
 INCLUDE_MEDIUM   = True
