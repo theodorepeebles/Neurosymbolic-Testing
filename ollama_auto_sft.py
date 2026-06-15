@@ -9,17 +9,16 @@ GENERATION_MODEL     = "gpt-oss:120b-cloud"
 CLASSIFICATION_MODEL = "gemma4:31b-cloud"
 EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
 SFT_OUT        = "../data/sft_positives.jsonl"
-INCLUDE_EASY   = True
+INCLUDE_EASY   = False
 INCLUDE_MEDIUM = True
-INCLUDE_HARD   = True
+INCLUDE_HARD   = False
 
 _DIFFICULTY_SPECS = {
     "easy":   "  - Easy:   3 entities, 2-3 flat constraints, 1 domain.",
     "medium": "  - Medium: 4-5 entities, 4-6 constraints, occasional not/or wrapper, 1-2 domains.",
     "hard":   "  - Hard:   5-6 entities, 6-9 constraints, not/or/if_then wrappers used freely, 2-3 domains.",
 }
-_ACTIVE = [d for d, on in [("easy", INCLUDE_EASY), ("medium", INCLUDE_MEDIUM), ("hard", INCLUDE_HARD)] if on]
-BATCH_SIZE = len(_ACTIVE) * 3
+BATCH_SIZE = 5
 
 NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
          "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",
@@ -75,8 +74,8 @@ Across the batch, vary which modalities appear.
    Vary WHICH letter is correct across puzzles — do not default to A.
 
 === DIFFICULTY ===
-Generate a mix of {", ".join(_ACTIVE)} puzzles.
-{chr(10).join(_DIFFICULTY_SPECS[d] for d in _ACTIVE)}
+Generate a mix of {", ".join(d for d, on in [("easy", INCLUDE_EASY), ("medium", INCLUDE_MEDIUM), ("hard", INCLUDE_HARD)] if on)} puzzles.
+{chr(10).join(_DIFFICULTY_SPECS[d] for d, on in [("easy", INCLUDE_EASY), ("medium", INCLUDE_MEDIUM), ("hard", INCLUDE_HARD)] if on)}
 
 === OUTPUT FORMAT ===
 Return ONLY a JSON array, no prose. Each element:
@@ -84,7 +83,7 @@ Return ONLY a JSON array, no prose. Each element:
   "problem": "<full natural-language puzzle text including the question and the labeled answer choices>",
   "answer": "<correct choice label, e.g. 'C'>",
   "domains": ["<one or more of: ordering, knights_and_knaves, grouping>"],
-  "difficulty": "<{'|'.join(_ACTIVE)}>"
+  "difficulty": "<{'|'.join(d for d, on in [('easy', INCLUDE_EASY), ('medium', INCLUDE_MEDIUM), ('hard', INCLUDE_HARD)] if on)}>"
 }}"""
 
 
@@ -96,7 +95,7 @@ def call_gen(names):
     but does NOT enforce any particular schema — we just need a well-formed array here.
     Contrast with extraction inside run_ns_pipeline, where fmt=LogicProblem.model_json_schema()
     passes the full Pydantic schema so Ollama is constrained to that exact structure."""
-    prompt = (f"Generate {BATCH_SIZE} puzzles now, split evenly across difficulties: {', '.join(_ACTIVE)}. Keep them solvable and rule-compliant."
+    prompt = (f"Generate {BATCH_SIZE} puzzles now. Keep them solvable and rule-compliant."
               + build_seed(names))
     raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=GENERATION_MODEL, think=False, timeout=400)
     return parse(raw)
