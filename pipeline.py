@@ -144,6 +144,7 @@ def extract_logic_problem(
             # CHANGED: validate_math_logic removed — stub this out until you
             # discover what semantic validation logic puzzles actually need
             # validate_logic(...) goes here when known
+            #
 
             return logic_prob, unmatched_errors, attempts_used
 

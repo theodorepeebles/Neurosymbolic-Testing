@@ -17,7 +17,7 @@ NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
 GEN_SYSTEM = """You are generating a benchmark of logic puzzles for an automated solver. The solver
 encodes each puzzle into a fixed constraint vocabulary and verifies it with the Z3 SMT
 solver. Therefore EVERY puzzle you generate MUST be fully expressible using ONLY the
-primitives below. Do not invent relationships outside this vocabulary.
+primitives below. Do not invent relationships outside this vocabulary. 
 
 === DOMAINS AND EXACT VOCABULARY ===
 
