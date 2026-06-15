@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from time import perf_counter
 from pipeline import ask_llm, extract_logic_problem, classify_domains, z3_solve, build_hybrid_schema
 
-MODEL      = "gpt-oss:120b-cloud"
+GENERATION_MODEL     = "gpt-oss:120b-cloud"
+CLASSIFICATION_MODEL = "gemma4:31b-cloud"
+EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
 SFT_OUT    = "../data/sft_positives.jsonl"
 BATCH_SIZE = 5
 
@@ -87,7 +89,7 @@ def call_gen(names):
     passes the full Pydantic schema so Ollama is constrained to that exact structure."""
     prompt = (f"Generate {BATCH_SIZE} puzzles now. Keep them solvable and rule-compliant."
               + build_seed(names))
-    raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=MODEL, think=False)
+    raw = ask_llm(prompt=prompt, system=GEN_SYSTEM, fmt="json", model=GENERATION_MODEL, think=False)
     return parse(raw)
 
 
@@ -122,7 +124,7 @@ def verify_one(puzzle, res):
         "problem_text":   puzzle["problem"],
         "active_domains": json.dumps(res.get("active_domains", [])),
         "extracted_json": json.dumps(extracted.model_dump()),
-        "model_name":     MODEL,
+        "model_name":     EXTRACTION_MODEL,
         "timestamp":      datetime.now(timezone.utc).isoformat()
     }
 
@@ -133,18 +135,18 @@ def fmt_elapsed(seconds):
 
 
 def run_extract_pipeline(problem_text):
-    """Classify → extract → Z3-verify using MODEL. No formatting, no UNSAT retry."""
+    """Classify → extract → Z3-verify. No formatting, no UNSAT retry."""
     try:
         print(f"  Classifying domains...")
         t0 = perf_counter()
-        active_domains = classify_domains(problem_text, model=MODEL)
+        active_domains = classify_domains(problem_text, model=CLASSIFICATION_MODEL)
         print(f"  Domains: {active_domains} ({perf_counter() - t0:.2f}s)")
 
         LogicProblem = build_hybrid_schema(active_domains)
 
         print(f"  Waiting for LLM extraction...")
         t1 = perf_counter()
-        extracted, _, _ = extract_logic_problem(problem_text, active_domains, LogicProblem, model=MODEL)
+        extracted, _, _ = extract_logic_problem(problem_text, active_domains, LogicProblem, model=EXTRACTION_MODEL)
         print(f"  Got extraction response ({perf_counter() - t1:.2f}s)")
 
         if extracted is None:
