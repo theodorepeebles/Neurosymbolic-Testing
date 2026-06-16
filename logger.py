@@ -18,7 +18,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-DB_PATH = "data/logic_runs.db"
+# all callers of this module live in NS_Math/logic/, so the path is relative to that directory
+DB_PATH = "../data/logic_runs.db"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS extraction_attempts (
