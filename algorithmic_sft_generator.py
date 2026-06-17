@@ -84,6 +84,7 @@ PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-o
 
 KK_SPEECH_ACT_MAX    = 2     # max speech act PAIRS added post-pruning (= 4 constraints total)
 CROSS_DOMAIN_BIAS    = 0.3   # extra cross-domain if_then budget as fraction of primitive_pool_size; 0 disables
+UNIQUE_SOLUTION_PROB = 0.10  # fraction of puzzles generated with exactly 1 solution
 
 NAMES = [
     "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
@@ -160,6 +161,7 @@ def draw_puzzle_params() -> dict:
         "prune_target":             random.randint(PRUNE_TARGET_MIN, PRUNE_TARGET_MAX),
         "num_answer_choices":       random.randint(ANSWER_CHOICES_MIN, ANSWER_CHOICES_MAX),
         "num_question_constraints": random.randint(QUESTION_CONSTRAINTS_MIN, QUESTION_CONSTRAINTS_MAX),
+        "unique_solution":          random.random() < UNIQUE_SOLUTION_PROB,
     }
 
 
@@ -559,8 +561,18 @@ def count_solutions(exprs: list, vars_dict: dict, min_count: int = 2) -> int:
     return count
 
 
-def prune_to_target(candidate_pool: list, params: dict, gt: dict) -> tuple:
-    """Greedily remove clues while guaranteeing >=2 solutions remain.
+def prune_to_target(candidate_pool: list, params: dict, gt: dict,
+                    unique_solution: bool = False) -> tuple:
+    """Greedily remove clues while maintaining the required solution count.
+
+    For unique_solution=False (default): guarantees >=2 solutions remain.
+      Phase A breaks the initial 1-solution deadlock by freely removing
+      constraints until ambiguity is unlocked; Phase B then prunes normally.
+      Because solutions are monotone (removing constraints never decreases
+      count), Phase B always reaches prune_target once count >= 2.
+    For unique_solution=True: maintains exactly 1 solution throughout.
+      Two passes handle cascading unlocks (constraints that become removable
+      only after others are shed first).
 
     Returns (surviving_clues, pruned_away_clues).
     pruned_away_clues are candidates for question constraints in Phase 5 --
@@ -596,52 +608,83 @@ def prune_to_target(candidate_pool: list, params: dict, gt: dict) -> tuple:
         print("  [!] Full clue pool is UNSAT -- something went wrong in Phase 3")
         return [], []
 
-    # Phase 4c: greedy removal -- for each clue in shuffled order, remove it if
-    # doing so still leaves >=2 solutions; stop once prune_target is reached
-    indices = list(range(len(valid_pool)))
+    indices       = list(range(len(valid_pool)))
     random.shuffle(indices)
     surviving_set = set(indices)
     pruned_list   = []
 
-    for idx in indices:
-        if len(surviving_set) <= prune_target:
-            break
-        test_set   = surviving_set - {idx}
-        test_exprs = base_exprs + [encoded[i] for i in test_set]
-        if count_solutions(test_exprs, vars_dict, min_count=2) >= 2:
-            surviving_set.discard(idx)
-            pruned_list.append(idx)
+    if unique_solution:
+        # Phase 4c (1-solution mode): only remove if count stays == 1.
+        # Two passes handle cascading unlocks.
+        for _ in range(2):
+            pass_indices  = list(surviving_set)
+            random.shuffle(pass_indices)
+            made_progress = False
+            for idx in pass_indices:
+                if len(surviving_set) <= prune_target:
+                    break
+                test_set   = surviving_set - {idx}
+                test_exprs = base_exprs + [encoded[i] for i in test_set]
+                if count_solutions(test_exprs, vars_dict, min_count=2) == 1:
+                    surviving_set.discard(idx)
+                    pruned_list.append(idx)
+                    made_progress = True
+            if not made_progress:
+                break
 
-    # Second pass: constraints tested early (when pool had 1 solution) and kept because
-    # removing them gave 1 solution (not >=2) may now be removable -- once the pool
-    # has >=2 solutions, removing anything keeps >=2. Re-shuffle and prune again.
-    if len(surviving_set) > prune_target:
-        indices2 = list(surviving_set)
-        random.shuffle(indices2)
-        for idx in indices2:
+        # Phase 4d: verify uniqueness preserved
+        surviving_exprs = base_exprs + [encoded[i] for i in surviving_set]
+        final_count     = count_solutions(surviving_exprs, vars_dict, min_count=2)
+        if final_count == 0:
+            print("  [!] unique_solution mode: surviving set is UNSAT.")
+        elif final_count >= 2:
+            print("  [!] unique_solution mode: uniqueness lost -- puzzle has >=2 solutions.")
+
+    else:
+        # Phase A: the full primitive pool always starts at 1 solution (by construction --
+        # all primitives are true statements about the ground truth, over-determining it).
+        # Freely remove constraints one-at-a-time until ambiguity (>=2 solutions) is
+        # unlocked, then hand off to Phase B.
+        initial_count = count_solutions(
+            base_exprs + [encoded[i] for i in surviving_set], vars_dict, min_count=2
+        )
+        if initial_count < 2:
+            for idx in indices:
+                if len(surviving_set) <= prune_target:
+                    break
+                surviving_set.discard(idx)
+                pruned_list.append(idx)
+                test_exprs = base_exprs + [encoded[i] for i in surviving_set]
+                if count_solutions(test_exprs, vars_dict, min_count=2) >= 2:
+                    break  # ambiguity unlocked; hand off to Phase B
+
+        # Phase B: only remove if >=2 solutions maintained. Solutions are monotone
+        # (removing constraints never decreases count), so this always reaches
+        # prune_target -- no second pass needed.
+        indices_b = list(surviving_set)
+        random.shuffle(indices_b)
+        for idx in indices_b:
             if len(surviving_set) <= prune_target:
                 break
-            test_set2   = surviving_set - {idx}
-            test_exprs2 = base_exprs + [encoded[i] for i in test_set2]
-            if count_solutions(test_exprs2, vars_dict, min_count=2) >= 2:
+            test_set   = surviving_set - {idx}
+            test_exprs = base_exprs + [encoded[i] for i in test_set]
+            if count_solutions(test_exprs, vars_dict, min_count=2) >= 2:
                 surviving_set.discard(idx)
                 pruned_list.append(idx)
 
-    # Phase 4d: post-loop check -- surviving set must have >=2 solutions
-    # If accidentally unique (prune_target too low for this puzzle's minimal
-    # unique set), add back the last pruned clue and recheck
-    surviving_exprs = base_exprs + [encoded[i] for i in surviving_set]
-    if count_solutions(surviving_exprs, vars_dict, min_count=2) < 2:
-        if pruned_list:
-            last = pruned_list.pop()
-            surviving_set.add(last)
-            surviving_exprs = base_exprs + [encoded[i] for i in surviving_set]
-            if count_solutions(surviving_exprs, vars_dict, min_count=2) < 2:
-                print("  [!] Could not achieve >=2 solutions after recovery.")
+        # Phase 4d: post-loop safety check -- recover if count accidentally dropped
+        surviving_exprs = base_exprs + [encoded[i] for i in surviving_set]
+        if count_solutions(surviving_exprs, vars_dict, min_count=2) < 2:
+            if pruned_list:
+                last = pruned_list.pop()
+                surviving_set.add(last)
+                surviving_exprs = base_exprs + [encoded[i] for i in surviving_set]
+                if count_solutions(surviving_exprs, vars_dict, min_count=2) < 2:
+                    print("  [!] Could not achieve >=2 solutions after recovery.")
 
     if len(surviving_set) > prune_target:
         print(f"  [!] prune_target={prune_target} not met; "
-              f"surviving={len(surviving_set)} (puzzle's minimal unique set is larger)")
+              f"surviving={len(surviving_set)} (puzzle's minimal set is larger)")
 
     # Phase 4e: pruned_away clues are question constraint candidates in Phase 5
     surviving_clues = [valid_pool[i] for i in sorted(surviving_set)]
@@ -725,22 +768,33 @@ def _z3_check_choice(value_dict: dict, choice_type: str,
 
 
 def generate_question(surviving_clues: list, pruned_clues: list,
-                      params: dict, gt: dict):
+                      params: dict, gt: dict,
+                      unique_solution: bool = False):
     """Generate a question with question constraint and labeled answer choices.
 
     Each answer choice has its own independently drawn type from QUESTION_TYPES
     (not a single shared question_type). Exactly one choice must be correct per
     its type's Z3 check; all others must fail.
 
+    For unique_solution=True: answer types are restricted to must_be_true /
+    must_be_false (could_be_* are semantically identical to must_be_* when only
+    one solution exists), and question_constraints are forced empty.
+
     Retries up to MAX_QUESTION_RETRIES by resampling the answer target.
     Returns a result dict or None -- most likely failure point for small entity
     counts where the domain has few candidate values to form distractors from.
     """
-    entity_names             = gt["entity_names"]
-    active_domains           = params["active_domains"]
-    num_answer_choices       = params["num_answer_choices"]
-    num_question_constraints = params["num_question_constraints"]
-    truth                    = gt["truth"]
+    entity_names       = gt["entity_names"]
+    active_domains     = params["active_domains"]
+    num_answer_choices = params["num_answer_choices"]
+    truth              = gt["truth"]
+
+    if unique_solution:
+        available_types          = ["must_be_true", "must_be_false"]
+        num_question_constraints = 0
+    else:
+        available_types          = QUESTION_TYPES
+        num_question_constraints = params["num_question_constraints"]
 
     vars_dict, base_exprs = _build_z3_vars_and_base(
         entity_names, active_domains,
@@ -791,7 +845,7 @@ def generate_question(surviving_clues: list, pruned_clues: list,
 
         # 5c: designate v_gt as the correct answer; find a type T_c where its check passes
         correct_value_dict = _value_to_constraint(entity, domain, v_gt)
-        types_shuffled     = random.sample(QUESTION_TYPES, len(QUESTION_TYPES))
+        types_shuffled     = random.sample(available_types, len(available_types))
         correct_type       = None
         for t in types_shuffled:
             if _z3_check_choice(correct_value_dict, t, puzzle_exprs, vars_dict):
@@ -809,7 +863,7 @@ def generate_question(surviving_clues: list, pruned_clues: list,
             if len(distractors) >= actual_num_choices - 1:
                 break
             v_d_dict   = _value_to_constraint(entity, domain, v_d)
-            d_types    = random.sample(QUESTION_TYPES, len(QUESTION_TYPES))
+            d_types    = random.sample(available_types, len(available_types))
             found_type = None
             for t_d in d_types:
                 if not _z3_check_choice(v_d_dict, t_d, puzzle_exprs, vars_dict):
@@ -900,6 +954,14 @@ PARAPHRASE_SYSTEM = (
     "Vary surface phrasing naturally. Do not add or remove any information."
 )
 
+PARAPHRASE_SYSTEM_UNIQUE = (
+    "You render structured logic puzzles as natural language. "
+    "The puzzle has exactly one valid solution — write it as a deterministic deduction, "
+    "not a process of elimination. "
+    "Write exactly the puzzle described -- no extra clues, no omissions. "
+    "Do not add or remove any information."
+)
+
 # concrete example included in every paraphrase prompt so the LLM has an
 # unambiguous rendering target: the question always asks "which is correct?" and
 # each answer choice carries its verbatim modality tag in square brackets
@@ -921,6 +983,26 @@ _PARAPHRASE_EXAMPLE = (
     "  A) [must be true] Alice is in the first position\n"
     "  B) [could be false] Bob is in the second position\n"
     "  C) [must be false] Carol is in the first position"
+)
+
+_PARAPHRASE_EXAMPLE_UNIQUE = (
+    "Example of the expected output format:\n\n"
+    "Input:\n"
+    "  Entities: Alice, Bob, Carol\n"
+    "  Clues:\n"
+    "    - Alice is in slot 1\n"
+    "    - Bob is immediately before Carol\n"
+    "    - Carol is in slot 3\n"
+    "  Question: Which of the following is correct?\n"
+    "  Answer choices:\n"
+    "    A) [must be true] Bob is in slot 2\n"
+    "    B) [must be false] Alice is in slot 3\n\n"
+    "Output:\n"
+    "  Alice, Bob, and Carol are placed in three positions. Alice occupies the first position. "
+    "Bob stands immediately before Carol, who is in the third position. "
+    "Which of the following is correct?\n"
+    "  A) [must be true] Bob is in the second position\n"
+    "  B) [must be false] Alice is in the third position"
 )
 
 
@@ -950,7 +1032,8 @@ def _constraint_to_english(c: dict) -> str:
     return str(c)
 
 
-def _build_paraphrase_prompt(extracted, question_info: dict) -> str:
+def _build_paraphrase_prompt(extracted, question_info: dict,
+                              unique_solution: bool = False) -> str:
     """Serialise extracted_json into a structured intermediate format for the LLM.
     Lists entities, clues, question type, and answer choices clearly so the LLM
     has an unambiguous rendering target. Avoids passing raw JSON."""
@@ -974,8 +1057,9 @@ def _build_paraphrase_prompt(extracted, question_info: dict) -> str:
         if ch.get("constraints")
     )
 
+    example = _PARAPHRASE_EXAMPLE_UNIQUE if unique_solution else _PARAPHRASE_EXAMPLE
     return (
-        f"{_PARAPHRASE_EXAMPLE}\n\n"
+        f"{example}\n\n"
         f"Now render this puzzle as natural language:\n\n"
         f"Entities: {entities_str}\n"
         f"Clues:\n{clue_strs}\n"
@@ -986,7 +1070,8 @@ def _build_paraphrase_prompt(extracted, question_info: dict) -> str:
     )
 
 
-def paraphrase_gemini(prompt: str, model: str) -> str:
+def paraphrase_gemini(prompt: str, model: str,
+                      system: str = PARAPHRASE_SYSTEM) -> str:
     """Call Gemini for free-text paraphrase.
     Mirrors call() in gemini_auto_sft.py but without response_mime_type='application/json'
     -- paraphrase output is natural language, not structured JSON."""
@@ -996,22 +1081,26 @@ def paraphrase_gemini(prompt: str, model: str) -> str:
     return client.models.generate_content(
         model=model,
         contents=prompt,
-        config=gtypes.GenerateContentConfig(max_output_tokens=2048),
+        config=gtypes.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=2048,
+        ),
     ).text
 
 
-def paraphrase_ollama(prompt: str, model: str) -> str:
+def paraphrase_ollama(prompt: str, model: str,
+                      system: str = PARAPHRASE_SYSTEM) -> str:
     """Call Ollama for free-text paraphrase.
     Uses ask_llm() from pipeline.py without the fmt= argument -- no grammar
     constraints needed since the output is natural language, not structured JSON.
     Default model: gpt-oss:120b-cloud (the cloud model used in ollama_auto_sft.py)."""
-    return ask_llm(prompt=prompt, system=PARAPHRASE_SYSTEM, model=model)
+    return ask_llm(prompt=prompt, system=system, model=model)
 
 
-def paraphrase(prompt: str) -> str:
+def paraphrase(prompt: str, system: str = PARAPHRASE_SYSTEM) -> str:
     if PARAPHRASE_BACKEND == "gemini":
-        return paraphrase_gemini(prompt, PARAPHRASE_MODEL)
-    return paraphrase_ollama(prompt, PARAPHRASE_MODEL)
+        return paraphrase_gemini(prompt, PARAPHRASE_MODEL, system=system)
+    return paraphrase_ollama(prompt, PARAPHRASE_MODEL, system=system)
 
 
 _DOMAIN_KEYWORDS = {
@@ -1125,8 +1214,9 @@ def generate_one_puzzle():
     or None if any phase fails or cannot produce a valid result.
     """
     # Phase 1
-    params         = draw_puzzle_params()
-    active_domains = params["active_domains"]
+    params          = draw_puzzle_params()
+    active_domains  = params["active_domains"]
+    unique_solution = params["unique_solution"]
 
     # Phase 2
     gt = draw_domain_axioms_and_ground_truth(params)
@@ -1139,7 +1229,9 @@ def generate_one_puzzle():
         return None
 
     # Phase 4
-    surviving_clues, pruned_clues = prune_to_target(candidate_pool, params, gt)
+    surviving_clues, pruned_clues = prune_to_target(
+        candidate_pool, params, gt, unique_solution=unique_solution
+    )
     if not surviving_clues:
         return None
 
@@ -1152,7 +1244,9 @@ def generate_one_puzzle():
             surviving_clues = surviving_clues + pair
 
     # Phase 5
-    question_info = generate_question(surviving_clues, pruned_clues, params, gt)
+    question_info = generate_question(
+        surviving_clues, pruned_clues, params, gt, unique_solution=unique_solution
+    )
     if question_info is None:
         return None
 
@@ -1164,11 +1258,13 @@ def generate_one_puzzle():
         return None
 
     # Phase 7 -- the only LLM call in the entire pipeline
-    prompt       = _build_paraphrase_prompt(extracted, question_info)
-    problem_text = None
+    system_prompt = PARAPHRASE_SYSTEM_UNIQUE if unique_solution else PARAPHRASE_SYSTEM
+    prompt        = _build_paraphrase_prompt(extracted, question_info,
+                                             unique_solution=unique_solution)
+    problem_text  = None
     for attempt in range(MAX_PARAPHRASE_RETRIES):
         try:
-            raw = paraphrase(prompt)
+            raw = paraphrase(prompt, system=system_prompt)
         except Exception as e:
             print(f"  [!] Paraphrase call failed: {e}")
             break
