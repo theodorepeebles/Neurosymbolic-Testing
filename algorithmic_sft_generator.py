@@ -61,7 +61,7 @@ except ImportError:
 # All bounds defined once as named constants. Every randomised draw in Phase 1
 # pulls from these ranges.
 # ==============================================================================
-
+#
 ENTITY_COUNT_MIN         = 2
 ENTITY_COUNT_MAX         = 6
 NUM_GROUPS_MIN           = 2      # only used when grouping is active
@@ -69,7 +69,7 @@ NUM_GROUPS_MAX           = 3
 WRAPPER_PCT_MIN          = 0.0
 WRAPPER_PCT_MAX          = 0.20   # at most 20% as many wrappers as primitives
 PRUNE_TARGET_MIN         = 3
-PRUNE_TARGET_MAX         = 8
+PRUNE_TARGET_MAX         = 6     # was 8 for first 100-1500 rows
 ANSWER_CHOICES_MIN       = 2
 ANSWER_CHOICES_MAX       = 4
 QUESTION_TYPES           = ["must_be_true", "must_be_false", "could_be_true", "could_be_false"]
@@ -79,12 +79,12 @@ MAX_PARAPHRASE_RETRIES   = 3
 MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_positives.jsonl"
-PARAPHRASE_BACKEND   = "gemini"            # "gemini" | "ollama"
-PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
+PARAPHRASE_BACKEND   = "ollama"            # "gemini" | "ollama"
+PARAPHRASE_MODEL     = "gpt-oss:20b-cloud"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
                                                 # for gemini use "gemini-3.1-flash-lite"
 
 KK_SPEECH_ACT_MAX    = 2     # max speech act PAIRS added post-pruning (= 4 constraints total)
-CROSS_DOMAIN_BIAS    = 0.3   # extra cross-domain if_then budget as fraction of primitive_pool_size; 0 disables
+CROSS_DOMAIN_BIAS    = 0.6   # extra cross-domain if_then budget as fraction of primitive_pool_size; 0 disables; was 8 for first 100-1500 rows
 UNIQUE_SOLUTION_PROB = 0.10  # fraction of puzzles generated with exactly 1 solution
 
 NAMES = [
