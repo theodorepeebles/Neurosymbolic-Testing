@@ -81,7 +81,7 @@ def classify_domains(problem_text: str, model: str = "qwen3:8b") -> list[str]:
 FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
 
 
-def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=None):
+def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=None, model="qwen3-ns"):
     base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
                    f"Extract this logic puzzle:\n\n{problem_text}")
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
@@ -90,7 +90,7 @@ def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=
     unmatched_errors, attempts_used = [], 0
     for attempt in range(MAX_ATTEMPTS):
         raw = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM,
-                      fmt=schema, model="qwen3-ns")   # <-- the fine-tune
+                      fmt=schema, model=model)
         attempts_used += 1
         try:
             return LogicProblem(**json.loads(raw)), unmatched_errors, attempts_used
@@ -635,9 +635,9 @@ def _handle_unsat_retry(
     
 
 
-def run_ns_pipeline(problem: str, extract_fn) -> dict:
-    # TODO: add model params (classify_model, extract_model, format_model) —
-    # currently relies on qwen3:8b defaults in classify_domains and extract_logic_problem
+def run_ns_pipeline(problem: str, extract_fn,
+                    classifier_model: str = "qwen3:8b",
+                    formatter_model: str = "qwen3:8b") -> dict:
     result = {
         "extracted":        None,
         "question_results": None,
@@ -650,7 +650,7 @@ def run_ns_pipeline(problem: str, extract_fn) -> dict:
         # STEP 1 — classify domains
         print(f"  Classifying domains...")
         t_cls_start = time.time()
-        active_domains = classify_domains(problem)
+        active_domains = classify_domains(problem, model=classifier_model)
         t_cls_end = time.time()
         print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
         result["llm_calls"] += 1
@@ -711,7 +711,8 @@ def run_ns_pipeline(problem: str, extract_fn) -> dict:
             prompt=(
             f"Answer this logic puzzle in one sentence. State only the correct answer label and what it means, no working or reasoning. The answer is {z3_result.get('question_results')}.\nLogic puzzle: {problem}"
             ),
-            system="You answer logic puzzles in one sentence. State only the correct answer label and what it means."
+            system="You answer logic puzzles in one sentence. State only the correct answer label and what it means.",
+            model=formatter_model,
         )
         t_fmt_end = time.time()
         print(f"  Got formatting response ({t_fmt_end - t_fmt_start:.2f}s)")
