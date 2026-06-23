@@ -188,7 +188,7 @@ def draw_domain_axioms_and_ground_truth(params: dict) -> dict:
     entity in every active domain. This is the source of truth -- all downstream
     phases derive from it. No LLM, no Z3.
 
-    Domain axioms (num_groups, group_sizes, num_slots) are drawn immediately
+    Domain axioms (num_groups, num_slots) are drawn immediately
     before entity assignment so they are available for the grouping step.
     Only drawn for active domains.
 
@@ -499,15 +499,16 @@ def generate_candidate_pool(params: dict, gt: dict) -> tuple:
 # ==============================================================================
 
 def _build_z3_vars_and_base(entity_names: list, active_domains: list,
-                             num_slots, num_groups, group_sizes) -> tuple:
+                             num_slots, num_groups) -> tuple:
     """Build Z3 variable dict and domain-axiom base expressions.
 
     Refactored from z3_solve() in pipeline.py to work on raw parameters rather
     than a LogicProblem instance, so pruning (Phase 4) and question checking
     (Phase 5) can call it before the Pydantic object is assembled.
 
-    Returns (vars_dict, base_exprs) where base_exprs encodes the structural
-    domain axioms (bounds, distinctness, group sizes) that are always present.
+    Returns (vars_dict, base_exprs) where base_exprs encodes structural domain
+    axioms (bounds, distinctness). Group sizes flow through exactly_n constraints
+    in the clue list, not through base_exprs.
     """
     vars_dict  = {}
     base_exprs = []
@@ -528,11 +529,7 @@ def _build_z3_vars_and_base(entity_names: list, active_domains: list,
             v = group_vars[f"group_{e}"]
             base_exprs.append(v >= 1)
             base_exprs.append(v <= num_groups)
-        for g_idx, size in enumerate(group_sizes):
-            g = g_idx + 1
-            base_exprs.append(
-                Sum([If(group_vars[f"group_{e}"] == g, 1, 0) for e in entity_names]) == size
-            )
+        # group sizes flow through exactly_n constraints, not base_exprs
 
     if "knights_and_knaves" in active_domains:
         kk_vars = {f"kk_{e}": Bool(f"kk_{e}") for e in entity_names}
@@ -587,7 +584,7 @@ def prune_to_target(candidate_pool: list, params: dict, gt: dict,
 
     vars_dict, base_exprs = _build_z3_vars_and_base(
         entity_names, active_domains,
-        gt["num_slots"], gt["num_groups"], gt["group_sizes"]
+        gt["num_slots"], gt["num_groups"]
     )
 
     # encode all candidate clues; skip any that fail encoding
@@ -799,7 +796,7 @@ def generate_question(surviving_clues: list, pruned_clues: list,
 
     vars_dict, base_exprs = _build_z3_vars_and_base(
         entity_names, active_domains,
-        gt["num_slots"], gt["num_groups"], gt["group_sizes"]
+        gt["num_slots"], gt["num_groups"]
     )
 
     # encode surviving puzzle body clues into Z3
@@ -916,9 +913,10 @@ def assemble_extracted_json(surviving_clues: list, question_info: dict,
                             params: dict, gt: dict):
     """Build and validate a LogicProblem Pydantic instance.
 
-    domain axiom info (num_slots, num_groups, group_sizes) is included as
-    top-level fields per DOMAIN_LP_FIELDS. The natural-language question stem
-    is NOT stored here -- it lives only in problem_text produced by Phase 7.
+    domain axiom info (num_slots, num_groups) is included as top-level fields
+    per DOMAIN_LP_FIELDS. Group sizes are encoded as exactly_n constraints.
+    The natural-language question stem is NOT stored here -- it lives only in
+    problem_text produced by Phase 7.
 
     Raises on schema validation failure; caller should catch and discard.
     """
@@ -938,8 +936,7 @@ def assemble_extracted_json(surviving_clues: list, question_info: dict,
         # temporarily: num_slots always equals entity_count
         extracted_dict["num_slots"] = gt["num_slots"]
     if "grouping" in active_domains:
-        extracted_dict["num_groups"]  = gt["num_groups"]
-        extracted_dict["group_sizes"] = gt["group_sizes"]
+        extracted_dict["num_groups"] = gt["num_groups"]
 
     LogicProblem = build_hybrid_schema(active_domains)
     return LogicProblem(**extracted_dict)
@@ -952,7 +949,12 @@ def assemble_extracted_json(surviving_clues: list, question_info: dict,
 PARAPHRASE_SYSTEM = (
     "You render structured logic puzzles as natural language. "
     "Write exactly the puzzle described -- no extra clues, no omissions. "
-    "Vary surface phrasing naturally. Do not add or remove any information."
+    "Vary surface phrasing naturally. Do not add or remove any information. "
+    "If-then constraints are CONDITIONAL statements -- always phrase them as "
+    "'If [antecedent], then [consequent]' or 'Whenever [A], [B]'. "
+    "Never use causal or consequentialist phrasing such as 'Because A is true, B follows' "
+    "or 'Since A, B must be the case' -- that incorrectly implies the antecedent is an "
+    "established fact rather than a hypothetical condition."
 )
 
 PARAPHRASE_SYSTEM_UNIQUE = (
@@ -960,7 +962,10 @@ PARAPHRASE_SYSTEM_UNIQUE = (
     "The puzzle has exactly one valid solution — write it as a deterministic deduction, "
     "not a process of elimination. "
     "Write exactly the puzzle described -- no extra clues, no omissions. "
-    "Do not add or remove any information."
+    "Do not add or remove any information. "
+    "If-then constraints are CONDITIONAL statements -- always phrase them as "
+    "'If [antecedent], then [consequent]'. Never use causal phrasing that implies "
+    "the antecedent is an established fact."
 )
 
 # concrete example included in every paraphrase prompt so the LLM has an
@@ -1034,6 +1039,7 @@ def _constraint_to_english(c: dict) -> str:
 
 
 def _build_paraphrase_prompt(extracted, question_info: dict,
+                              active_domains: list = None,
                               unique_solution: bool = False) -> str:
     """Serialise extracted_json into a structured intermediate format for the LLM.
     Lists entities, clues, question type, and answer choices clearly so the LLM
@@ -1058,16 +1064,41 @@ def _build_paraphrase_prompt(extracted, question_info: dict,
         if ch.get("constraints")
     )
 
+    # domain axioms: explicit structural facts that must be stated at the start of the problem
+    axiom_lines = []
+    if active_domains:
+        if "ordering" in active_domains:
+            n = dump.get("num_slots", "?")
+            axiom_lines.append(f"  - There are {n} positions (numbered 1 through {n})")
+        if "knights_and_knaves" in active_domains:
+            axiom_lines.append(
+                "  - Every person is either a knight (always tells the truth) "
+                "or a knave (always lies)"
+            )
+        if "grouping" in active_domains:
+            n = dump.get("num_groups", "?")
+            axiom_lines.append(f"  - There are {n} groups (group sizes are NOT given here; "
+                               "they may or may not appear in the clues)")
+    axiom_str = "\n".join(axiom_lines) if axiom_lines else ""
+
+    axiom_block = (
+        f"Domain axioms (MUST be stated explicitly at the start of the problem):\n{axiom_str}\n"
+        if axiom_str else ""
+    )
+
     example = _PARAPHRASE_EXAMPLE_UNIQUE if unique_solution else _PARAPHRASE_EXAMPLE
     return (
         f"{example}\n\n"
         f"Now render this puzzle as natural language:\n\n"
+        f"{axiom_block}"
         f"Entities: {entities_str}\n"
         f"Clues:\n{clue_strs}\n"
         f"{qc_str}"
         f"Question: {stem}\n"
         f"Answer choices:\n{choices_str}\n\n"
-        f"Output the complete natural-language puzzle as plain text only."
+        f"Output the complete natural-language puzzle as plain text only. "
+        f"Open with a sentence or two that states the domain axioms above. "
+        f"Phrase any if-then clues as conditionals ('If A, then B'), never as causal statements."
     )
 
 
@@ -1261,6 +1292,7 @@ def generate_one_puzzle():
     # Phase 7 -- the only LLM call in the entire pipeline
     system_prompt = PARAPHRASE_SYSTEM_UNIQUE if unique_solution else PARAPHRASE_SYSTEM
     prompt        = _build_paraphrase_prompt(extracted, question_info,
+                                             active_domains=active_domains,
                                              unique_solution=unique_solution)
     problem_text  = None
     for attempt in range(MAX_PARAPHRASE_RETRIES):

@@ -257,8 +257,10 @@ EXAMPLE_JSONS = {
     frozenset(["grouping"]): {
         "entities": ["Alice", "Bob", "Carol", "Dave"],
         "num_groups": 2,
-        "group_sizes": [2, 2],
         "constraints": [
+            # group sizes encoded as exactly_n, not as a group_sizes field
+            {"type": "exactly_n", "entities": ["Alice", "Bob", "Carol", "Dave"], "n": 2, "group": 1},
+            {"type": "exactly_n", "entities": ["Alice", "Bob", "Carol", "Dave"], "n": 2, "group": 2},
             {"type": "different_group", "entities": ["Alice", "Bob"]},
             # disjunctive constraint — either pairing is acceptable
             {
@@ -500,11 +502,7 @@ def z3_solve(extracted) -> dict:
         vars.update({f"group_{e}": Int(f"group_{e}") for e in extracted.entities})
         for e in extracted.entities:
             solver.add(vars[f"group_{e}"] >= 1, vars[f"group_{e}"] <= extracted.num_groups)
-        for g_idx, size in enumerate(extracted.group_sizes):
-            g = g_idx + 1
-            solver.add(
-                Sum([If(vars[f"group_{e}"] == g, 1, 0) for e in extracted.entities]) == size
-            )
+        # group sizes are encoded as exactly_n constraints in the constraint list
 
     if all_types & KK_TYPES:
         vars.update({f"kk_{e}": Bool(f"kk_{e}") for e in extracted.entities})

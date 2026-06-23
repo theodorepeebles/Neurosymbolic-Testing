@@ -44,8 +44,7 @@ DOMAIN_CONSTRAINT_CLASSES = {
 
 DOMAIN_LP_FIELDS = {
     "ordering":           {"num_slots":   (int, ...)},
-    "grouping":           {"num_groups":  (int, ...),
-                           "group_sizes": (list[int], ...)},
+    "grouping":           {"num_groups":  (int, ...)},
     "knights_and_knaves": {},
 }
 
