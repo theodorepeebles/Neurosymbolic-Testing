@@ -79,6 +79,12 @@ MAX_PARAPHRASE_RETRIES   = 3
 MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_positives.jsonl"
+SEND_TO_SFT_POSITIVES = True   # write to sft_positives.jsonl
+SEND_TO_TEST_SUITE    = False  # append entry to test_suite.py + test_suite_data.jsonl
+
+TEST_SUITE_PY_OUT   = "test_suite.py"               # relative to logic/ (same dir as this file)
+TEST_SUITE_DATA_OUT = "../data/test_suite_data.jsonl"
+
 PARAPHRASE_BACKEND   = "ollama"            # "gemini" | "ollama"
 PARAPHRASE_MODEL     = "gpt-oss:20b-cloud"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
                                                 # for gemini use "gemini-3.1-flash-lite"
@@ -1190,23 +1196,42 @@ def verify_paraphrase(text: str, extracted, question_info: dict,
 # ==============================================================================
 # PHASE 8 -- LOG AND EMIT
 #
-# Writes to both logic_runs.db and sft_positives.jsonl independently.
+# Writes to logic_runs.db (always), sft_positives.jsonl (if SEND_TO_SFT_POSITIVES),
+# and/or test_suite.py + test_suite_data.jsonl (if SEND_TO_TEST_SUITE).
 # export_log.py is intentionally bypassed -- it overwrites sft_positives.jsonl
 # on every run, but 300+ manually-generated rows already exist in the file that
 # are not in logic_runs.db. Direct dual-write here preserves those rows.
 # ==============================================================================
 
+def _append_to_test_suite_py(problem_text: str, correct_label: str, path: str) -> None:
+    """Insert one dict entry into the test_suite list in test_suite.py."""
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    entry = (
+        f"\n    {{\n"
+        f"        \"problem\": {json.dumps(problem_text)},\n"
+        f"        \"answer\": {json.dumps(correct_label)}  # algorithmically generated\n"
+        f"    }},\n"
+    )
+    last_bracket = content.rfind("]")
+    if last_bracket == -1:
+        raise ValueError(f"Could not find closing ] in {path}")
+    new_content = content[:last_bracket] + entry + content[last_bracket:]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+
 def log_and_emit(problem_text: str, extracted, question_info: dict,
                  active_domains: list, run_id: str) -> None:
-    """Write one row to SQLite (with ground_truth_answer) and to
-    sft_positives.jsonl (without ground_truth_answer, per training data design).
-    Both schemas match the existing formats exactly.
+    """Write one row to SQLite (always) and conditionally to sft_positives.jsonl
+    and/or test_suite.py + test_suite_data.jsonl based on the routing flags.
     """
     extracted_json_str = json.dumps(extracted.model_dump())
     model_name         = f"algorithmic_{PARAPHRASE_MODEL}"
     ts                 = datetime.now(timezone.utc).isoformat()
+    correct_label      = question_info["correct_label"]
 
-    # 8a: SQLite -- matches existing log_attempt() signature exactly
+    # 8a: SQLite -- always written; includes ground_truth_answer for evaluation
     log_attempt(
         run_id=run_id,
         attempt_number=1,
@@ -1216,24 +1241,40 @@ def log_and_emit(problem_text: str, extracted, question_info: dict,
         schema_valid=True,
         z3_result="SAT",
         answer_correct=True,
-        ground_truth_answer=question_info["correct_label"],  # SQLite only
+        ground_truth_answer=correct_label,
         model_name=model_name,
         constraint_type_counts=constraint_type_counts(extracted),
     )
 
-    # 8b: sft_positives.jsonl -- matches existing row format exactly
-    # correct_answer intentionally omitted: extraction model is trained on
-    # problem_text -> extracted_json; Z3 computes the answer at inference time
-    row = {
-        "run_id":         run_id,
-        "problem_text":   problem_text,
-        "active_domains": json.dumps(active_domains),
-        "extracted_json": extracted_json_str,
-        "model_name":     model_name,
-        "timestamp":      ts,
-    }
-    with open(SFT_OUT, "a") as f:
-        f.write(json.dumps(row) + "\n")
+    # 8b: sft_positives.jsonl -- correct_answer intentionally omitted; extraction
+    # model trains on problem_text -> extracted_json; Z3 computes the answer
+    if SEND_TO_SFT_POSITIVES:
+        row = {
+            "run_id":         run_id,
+            "problem_text":   problem_text,
+            "active_domains": json.dumps(active_domains),
+            "extracted_json": extracted_json_str,
+            "model_name":     model_name,
+            "timestamp":      ts,
+        }
+        with open(SFT_OUT, "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    # 8c: test_suite.py + test_suite_data.jsonl -- includes ground_truth_answer
+    if SEND_TO_TEST_SUITE:
+        _append_to_test_suite_py(problem_text, correct_label, TEST_SUITE_PY_OUT)
+
+        ts_data_row = {
+            "run_id":               run_id,
+            "problem_text":         problem_text,
+            "active_domains":       json.dumps(active_domains),
+            "extracted_json":       extracted_json_str,
+            "model_name":           model_name,
+            "timestamp":            ts,
+            "ground_truth_answer":  correct_label,
+        }
+        with open(TEST_SUITE_DATA_OUT, "a") as f:
+            f.write(json.dumps(ts_data_row) + "\n")
 
 
 # ==============================================================================
@@ -1316,9 +1357,13 @@ def generate_one_puzzle():
 
 def main(target: int) -> None:
     init_db()
+    # seen always reflects sft_positives.jsonl — used to block training-data
+    # contamination regardless of which output flags are active
     seen = load_seen_hashes(SFT_OUT)
-    kept = len(seen)
-    print(f"Starting -- already saved: {kept} | target: {target} "
+    kept = 0
+    test_suite_seen = set()  # deduplicates test_suite writes within this run
+    print(f"Starting -- target: {target} "
+          f"| sft_positives: {SEND_TO_SFT_POSITIVES} | test_suite: {SEND_TO_TEST_SUITE} "
           f"| backend: {PARAPHRASE_BACKEND}/{PARAPHRASE_MODEL}")
 
     while kept < target:
@@ -1328,9 +1373,14 @@ def main(target: int) -> None:
         problem_text, extracted, question_info, active_domains, run_id = result
         h = fp(problem_text)
         if h in seen:
-            continue
+            continue  # already in training data — never add to test suite either
+        if SEND_TO_TEST_SUITE and h in test_suite_seen:
+            continue  # already written to test_suite in this run
         log_and_emit(problem_text, extracted, question_info, active_domains, run_id)
-        seen.add(h)
+        if SEND_TO_SFT_POSITIVES:
+            seen.add(h)
+        if SEND_TO_TEST_SUITE:
+            test_suite_seen.add(h)
         kept += 1
         print(f"kept {kept}/{target}  |  domains: {active_domains}"
               f"  |  correct: {question_info['correct_label']}")
