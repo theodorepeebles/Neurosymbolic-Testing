@@ -26,12 +26,12 @@ with open(_ts_data_path, encoding="utf-8") as _f:
 RUN_BASELINE = False
 
 MODEL_SETS = [
-    {
-        "name": "qwen3:8b",
-        "classifier_llm": "qwen3:8b",
-        "extraction_llm": "qwen3:8b",
-        "formatting_llm": "qwen3:8b",
-    },
+    # {
+    #     "name": "qwen3:8b",
+    #     "classifier_llm": "qwen3:8b",
+    #     "extraction_llm": "qwen3:8b",
+    #     "formatting_llm": "qwen3:8b",
+    # },
     {
         "name": "SFT_Extraction_Qwen3_0.6b",
         "classifier_llm": "qwen3:8b",

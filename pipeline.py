@@ -7,7 +7,7 @@ from collections import Counter
 from validators import DOMAIN_CONSTRAINT_CLASSES, build_hybrid_schema
 
 
-def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150) -> str:
+def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150, is_extraction: bool = False, debug_render_only: bool = False) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     Returns:
@@ -18,11 +18,19 @@ def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen
         "prompt": prompt,
         "system": system,
         "stream": False,
-        "think": think
+        "think": think,
     }
+    # not sure how redundant this body options stuff is - need to do direct comparison testing with and without it on a large dataset - on 30 examples it performed exactly the same
+    if is_extraction:
+        body["options"] = {
+            "temperature": 0,
+            "top_k": 1,
+            "num_predict": 1024,
+            "num_ctx": 4096,
+        }
     if fmt:
         body["format"] = fmt
-
+        
     try:
         response = requests.post("http://localhost:11434/api/generate", json=body, timeout=timeout)
 
@@ -81,25 +89,29 @@ def classify_domains(problem_text: str, model: str = "qwen3:8b") -> list[str]:
 FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
 
 
-def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=None, model="qwen3-ns"):
+def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=None, model="SFT_Extraction_Qwen3_0.6b"):
     base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
                    f"Extract this logic puzzle:\n\n{problem_text}")
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
     schema = LogicProblem.model_json_schema()
 
+    # TEMPORARY TEST — dump Ollama's rendered prompt without running inference
+    #rendered = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM, model=model, is_extraction=True, debug_render_only=True)
+
     unmatched_errors, attempts_used = [], 0
+    last_raw = ""
     for attempt in range(MAX_ATTEMPTS):
-        raw = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM,
-                      fmt=schema, model=model)
+        raw = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM, fmt=schema, model=model, is_extraction=True)
+        last_raw = raw
         attempts_used += 1
         try:
-            return LogicProblem(**json.loads(raw)), unmatched_errors, attempts_used
+            return LogicProblem(**json.loads(raw)), unmatched_errors, attempts_used, raw
         except Exception as e:
             unmatched_errors.append({"attempt": attempt + 1,
                                      "error_type": type(e).__name__, "error_msg": str(e)})
             prompt = (f"{base_prompt}\n\nYour previous JSON:\n{raw}\n\n"
                       f"It failed: {e}\n\nReturn corrected JSON.")
-    return None, unmatched_errors, attempts_used
+    return None, unmatched_errors, attempts_used, last_raw
 
 
 
@@ -107,7 +119,7 @@ def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=
 
 
 # For LLM retry upon schema validation failure
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 1
 
 
 # LogicProblem is a parameter instead of a fixed import — it's built
@@ -132,6 +144,7 @@ def extract_logic_problem(
     schema = LogicProblem.model_json_schema()
     active_hints = set()
 
+    last_raw = ""
     for attempt in range(MAX_ATTEMPTS):
 
         # fmt=schema: for local models this enforces grammar-based constrained generation
@@ -141,7 +154,8 @@ def extract_logic_problem(
         # may still wrap output in markdown fences or add prose. Strip fences before
         # json.loads (see `cleaned` below). This is not documented by Ollama explicitly;
         # confirmed empirically by observing fence-wrapped responses from cloud models.
-        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model)
+        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model, is_extraction=True)
+        last_raw = raw
         attempts_used += 1
 
         try:
@@ -155,7 +169,7 @@ def extract_logic_problem(
             # validate_logic(...) goes here when known
             #
 
-            return logic_prob, unmatched_errors, attempts_used
+            return logic_prob, unmatched_errors, attempts_used, raw
 
         except Exception as e:
             error_msg = str(e)
@@ -175,14 +189,14 @@ def extract_logic_problem(
             print(f"  [Parse failed attempt {attempt+1}/{MAX_ATTEMPTS}: {e}]")
 
             prompt = (
-                f"Extract this logic puzzle:\n\n{problem_text}\n\n"  
+                f"Extract this logic puzzle:\n\n{problem_text}\n\n"
                 f"Your previous attempt returned this JSON:\n{raw}\n\n"
                 f"It failed validation with this error: {error_msg}\n\n"
                 f"Rules to remember:\n{hints_block}\n\n"
                 f"Fix the error and return the corrected JSON."
             )
 
-    return None, unmatched_errors, attempts_used
+    return None, unmatched_errors, attempts_used, last_raw
 
 
 # --- Example JSONs ---
@@ -621,7 +635,7 @@ def _handle_unsat_retry(
         f"Re-read the problem carefully and fix the extraction."
     )
 
-    extracted_retry, retry_unmatched, retry_calls = extract_fn(
+    extracted_retry, retry_unmatched, retry_calls, _retry_raw = extract_fn(
         problem, active_domains, type(extracted), unsat_context=unsat_context
     )
 
@@ -635,11 +649,12 @@ def _handle_unsat_retry(
     
 
 
-def run_ns_pipeline(problem: str, extract_fn,
+def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None = None,
                     classifier_model: str = "qwen3:8b",
                     formatter_model: str = "qwen3:8b") -> dict:
     result = {
         "extracted":        None,
+        "extraction_raw":   None,
         "question_results": None,
         "z3_status":        None,
         "formatted_output": None,
@@ -647,13 +662,20 @@ def run_ns_pipeline(problem: str, extract_fn,
         "unmatched_errors": []
     }
     try:
-        # STEP 1 — classify domains
-        print(f"  Classifying domains...")
-        t_cls_start = time.time()
-        active_domains = classify_domains(problem, model=classifier_model)
-        t_cls_end = time.time()
-        print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
-        result["llm_calls"] += 1
+        # ── TEMPORARY TEST OVERRIDE ───────────────────────────────────────────
+        # Skips the LLM classifier. Uses active_domains injected by the caller
+        # (loaded from test_suite_data.jsonl in run.py) so each problem gets its
+        # ground-truth domains rather than a classifier prediction. Remove this
+        # block and uncomment STEP 1 below to restore normal classifier flow.
+        # ── END TEMPORARY TEST OVERRIDE ──────────────────────────────────────
+
+        # STEP 1 — classify domains (disabled during temporary test)
+        # print(f"  Classifying domains...")
+        # t_cls_start = time.time()
+        # active_domains = classify_domains(problem, model=classifier_model)
+        # t_cls_end = time.time()
+        # print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
+        # result["llm_calls"] += 1
 
         result["active_domains"] = active_domains
 
@@ -662,12 +684,14 @@ def run_ns_pipeline(problem: str, extract_fn,
         # STEP 2 — extract
         print(f"  Waiting for LLM extraction...")
         t_ext_start = time.time()
-        extracted, unmatched_errors, ext_calls = extract_fn(
+        extracted, unmatched_errors, ext_calls, extraction_raw = extract_fn(
             problem, active_domains, LogicProblem
         )
         t_ext_end = time.time()
         print(f"  Got extraction response ({t_ext_end - t_ext_start:.2f}s)")
+        print(f"  Raw extraction response:\n{extraction_raw}")
 
+        result["extraction_raw"]   = extraction_raw
         result["llm_calls"]       += ext_calls
         result["unmatched_errors"] = unmatched_errors
 
