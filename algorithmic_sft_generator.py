@@ -1104,7 +1104,10 @@ def _build_paraphrase_prompt(extracted, question_info: dict,
         f"Answer choices:\n{choices_str}\n\n"
         f"Output the complete natural-language puzzle as plain text only. "
         f"Open with a sentence or two that states the domain axioms above. "
-        f"Phrase any if-then clues as conditionals ('If A, then B'), never as causal statements."
+        f"Phrase any if-then clues as conditionals ('If A, then B'), never as causal statements. "
+        f"If a 'Given that:' line is present above, it is a question-specific premise, NOT a "
+        f"general clue: introduce it in the question itself, starting with 'Given that ... "
+        f"{{question constraint}}', and do NOT list it among the clues."
     )
 
 
