@@ -79,20 +79,20 @@ MAX_PARAPHRASE_RETRIES   = 3
 MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_positives.jsonl"
-SEND_TO_SFT_POSITIVES = True   # write to sft_positives.jsonl
-SEND_TO_TEST_SUITE    = False  # append entry to test_suite.py + test_suite_data.jsonl
+SEND_TO_SFT_POSITIVES = False   # write to sft_positives.jsonl
+SEND_TO_TEST_SUITE    = True  # append entry to test_suite.py + test_suite_data.jsonl
 
 TEST_SUITE_PY_OUT   = "test_suite.py"               # relative to logic/ (same dir as this file)
 TEST_SUITE_DATA_OUT = "../data/test_suite_data.jsonl"
 
-PARAPHRASE_BACKEND   = "ollama"            # "gemini" | "ollama"
-PARAPHRASE_MODEL     = "gpt-oss:20b-cloud"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
+PARAPHRASE_BACKEND   = "gemini"            # "gemini" | "ollama"
+PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
                                                 # for gemini use "gemini-3.1-flash-lite"
 
 KK_SPEECH_ACT_MAX    = 2     # max speech act PAIRS added post-pruning (= 4 constraints total)
 CROSS_DOMAIN_BIAS    = 0.6   # extra cross-domain if_then budget as fraction of primitive_pool_size; 0 disables; was 8 for first 100-1500 rows
 UNIQUE_SOLUTION_PROB = 0.10  # fraction of puzzles generated with exactly 1 solution
-
+#
 NAMES = [
     "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
     "Ivan", "Judy", "Karl", "Liam", "Mona", "Nina", "Omar", "Priya",

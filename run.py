@@ -10,7 +10,7 @@ from logger import init_db, log_attempt
 results = []
 total_problems = len(test_suite)
 all_unmatched = []
-
+#
 # ── TEMPORARY TEST: domain lookup from test_suite_data.jsonl ─────────────────
 # Feeds ground-truth active_domains into run_ns_pipeline so the classifier is
 # bypassed. Lets us test extraction + Z3 in isolation. Remove this block and

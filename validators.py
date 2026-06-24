@@ -50,7 +50,7 @@ DOMAIN_LP_FIELDS = {
 
 
 # --- Hybrid builder: recursive classes built FRESH per call (no shared/stale state) ---
-
+#
 def build_hybrid_schema(active_domains: list[str]) -> type:
     leaf_classes = [cls for d in active_domains for cls in DOMAIN_CONSTRAINT_CLASSES[d]]
 

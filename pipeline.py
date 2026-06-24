@@ -95,9 +95,6 @@ def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
     schema = LogicProblem.model_json_schema()
 
-    # TEMPORARY TEST — dump Ollama's rendered prompt without running inference
-    #rendered = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM, model=model, is_extraction=True, debug_render_only=True)
-
     unmatched_errors, attempts_used = [], 0
     last_raw = ""
     for attempt in range(MAX_ATTEMPTS):
