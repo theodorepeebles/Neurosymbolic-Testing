@@ -35,7 +35,7 @@ primitives below. Do not invent relationships outside this vocabulary.
 ORDERING — entities occupy distinct positions in slots numbered 1..N (1-INDEXED):
   - before(X, Y): X is in an earlier slot than Y
   - immediately_before(X, Y): X is exactly one slot before Y
-  - not_adjacent(X, Y): |slot(X) - slot(Y)| > 1
+  - adjacent(X, Y): |slot(X) - slot(Y)| == 1
   - slot_fixed(X, k): X is in slot k (k is 1-indexed, 1..N)
 
 KNIGHTS_AND_KNAVES — each character is a truth-teller (always true statements) or a
@@ -49,6 +49,7 @@ GROUPING — entities are partitioned into G groups of fixed sizes (groups 1-IND
   - same_group(X, Y, ...): listed entities share a group
   - different_group(X, Y, ...): listed entities are all in distinct groups
   - exactly_n(entities, n, group): exactly n of the listed entities are in group k
+  - is_in(X, k): X is in group k (1-indexed)
 
 LOGICAL WRAPPERS — combine or negate any of the above:
   - not(claim)

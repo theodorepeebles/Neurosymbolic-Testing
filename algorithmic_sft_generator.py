@@ -292,12 +292,12 @@ def _gen_ordering_primitives(entity_names: list, truth: dict) -> tuple:
             else:
                 false_p.append({"type": "immediately_before", "left": x, "right": y})
 
-    # not_adjacent -- unordered pairs where gap > 1
+    # adjacent -- unordered pairs where gap == 1; not_adjacent formed by not(adjacent(...))
     for x, y in combinations(entity_names, 2):
-        if abs(slots[x] - slots[y]) > 1:
-            true_p.append({"type": "not_adjacent", "left": x, "right": y})
+        if abs(slots[x] - slots[y]) == 1:
+            true_p.append({"type": "adjacent", "left": x, "right": y})
         else:
-            false_p.append({"type": "not_adjacent", "left": x, "right": y})
+            false_p.append({"type": "adjacent", "left": x, "right": y})
 
     return true_p, false_p
 
@@ -334,6 +334,14 @@ def _gen_grouping_primitives(entity_names: list, truth: dict, num_groups: int) -
         else:
             true_p.append({"type": "different_group", "entities": [x, y]})
             false_p.append({"type": "same_group",     "entities": [x, y]})
+
+    # is_in -- one per entity per group
+    for e in entity_names:
+        for g in range(1, num_groups + 1):
+            if groups[e] == g:
+                true_p.append({"type": "is_in", "entity": e, "group": g})
+            else:
+                false_p.append({"type": "is_in", "entity": e, "group": g})
 
     # exactly_n (full: all entities) -- canonical version, one per group
     all_ents = list(entity_names)
@@ -734,8 +742,7 @@ def _value_to_constraint(entity: str, domain: str, value) -> dict:
         typ = "is_truth_teller" if value == "knight" else "is_deceiver"
         return {"type": typ, "entity": entity}
     elif domain == "grouping":
-        # "entity is in group G" encoded as exactly_n([entity], n=1, group=G)
-        return {"type": "exactly_n", "entities": [entity], "n": 1, "group": int(value)}
+        return {"type": "is_in", "entity": entity, "group": int(value)}
     raise ValueError(f"Unknown domain: {domain}")
 
 
@@ -1024,7 +1031,8 @@ def _constraint_to_english(c: dict) -> str:
     if t == "slot_fixed":         return f"{c['entity']} is in slot {c['slot']}"
     elif t == "before":           return f"{c['left']} is before {c['right']}"
     elif t == "immediately_before": return f"{c['left']} is immediately before {c['right']}"
-    elif t == "not_adjacent":     return f"{c['left']} and {c['right']} are not adjacent"
+    elif t == "adjacent":         return f"{c['left']} and {c['right']} are adjacent"
+    elif t == "is_in":            return f"{c['entity']} is in group {c['group']}"
     elif t == "is_truth_teller":  return f"{c['entity']} is a truth-teller (knight)"
     elif t == "is_deceiver":      return f"{c['entity']} is a deceiver (knave)"
     elif t == "same_group":       return f"{' and '.join(c['entities'])} are in the same group"

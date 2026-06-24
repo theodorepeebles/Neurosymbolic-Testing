@@ -314,9 +314,9 @@ Logical wrapper — use to combine or negate any constraint:
 DOMAIN_RULES = {
     "ordering": """\
 Ordering constraints:
-  Valid types: before, immediately_before, not_adjacent, slot_fixed
-  - before / immediately_before / not_adjacent : require "left" and "right" (entity names)
-  - slot_fixed                                  : requires "entity" and "slot" (1-indexed integer)""",
+  Valid types: before, immediately_before, adjacent, slot_fixed
+  - before / immediately_before / adjacent : require "left" and "right" (entity names)
+  - slot_fixed                             : requires "entity" and "slot" (1-indexed integer)""",
 
     "knights_and_knaves": """\
 Knights and Knaves constraints:
@@ -329,9 +329,10 @@ Knights and Knaves constraints:
 
     "grouping": """\
 Grouping constraints:
-  Valid types: same_group, different_group, exactly_n
+  Valid types: same_group, different_group, exactly_n, is_in
   - same_group / different_group : require "entities" (list of entity names)
-  - exactly_n                    : requires "entities", "n" (integer), and optionally "group" (1-indexed)""",
+  - exactly_n                    : requires "entities", "n" (integer), and optionally "group" (1-indexed)
+  - is_in                        : requires "entity" (name) and "group" (1-indexed integer)""",
 }
 
 
@@ -421,7 +422,7 @@ def encode(c, vars: dict):
     # Ordering
     if   t == "before":             return vars[f"slot_{c.left}"] < vars[f"slot_{c.right}"]
     elif t == "immediately_before": return vars[f"slot_{c.left}"] + 1 == vars[f"slot_{c.right}"]
-    elif t == "not_adjacent":       return Abs(vars[f"slot_{c.left}"] - vars[f"slot_{c.right}"]) > 1
+    elif t == "adjacent":           return Abs(vars[f"slot_{c.left}"] - vars[f"slot_{c.right}"]) == 1
     elif t == "slot_fixed":         return vars[f"slot_{c.entity}"] == c.slot
 
     # Knights and Knaves
@@ -436,6 +437,8 @@ def encode(c, vars: dict):
         return Distinct([vars[f"group_{e}"] for e in c.entities])
     elif t == "exactly_n":
         return Sum([If(vars[f"group_{e}"] == c.group, 1, 0) for e in c.entities]) == c.n
+    elif t == "is_in":
+        return vars[f"group_{c.entity}"] == c.group
 
     # Logical wrappers
     elif t == "if_then": return Implies(encode(c.antecedent, vars), encode(c.consequent, vars))
@@ -489,8 +492,8 @@ def constraint_type_counts(extracted) -> dict:
     return dict(counter)
 
 
-ORDERING_TYPES = {"before", "immediately_before", "not_adjacent", "slot_fixed"}
-GROUPING_TYPES = {"same_group", "different_group", "exactly_n"}
+ORDERING_TYPES = {"before", "immediately_before", "adjacent", "slot_fixed"}
+GROUPING_TYPES = {"same_group", "different_group", "exactly_n", "is_in"}
 KK_TYPES       = {"is_truth_teller", "is_deceiver"}
 
 def z3_solve(extracted) -> dict:
@@ -584,13 +587,14 @@ def format_constraint(c) -> str:
     t = c.type
     if   t == "before":             return f"before({c.left}, {c.right})"
     elif t == "immediately_before": return f"immediately_before({c.left}, {c.right})"
-    elif t == "not_adjacent":       return f"not_adjacent({c.left}, {c.right})"
+    elif t == "adjacent":           return f"adjacent({c.left}, {c.right})"
     elif t == "slot_fixed":         return f"slot_fixed({c.entity}, slot={c.slot})"
     elif t == "is_truth_teller":    return f"is_truth_teller({c.entity})"
     elif t == "is_deceiver":        return f"is_deceiver({c.entity})"
     elif t == "same_group":         return f"same_group({', '.join(c.entities)})"
     elif t == "different_group":    return f"different_group({', '.join(c.entities)})"
     elif t == "exactly_n":          return f"exactly_n({', '.join(c.entities)}, n={c.n}, group={c.group})"
+    elif t == "is_in":              return f"is_in({c.entity}, group={c.group})"
     elif t == "if_then":            return f"if_then({format_constraint(c.antecedent)}, {format_constraint(c.consequent)})"
     elif t == "not":                return f"not({format_constraint(c.claim)})"
     elif t == "and":                return f"and({', '.join(format_constraint(cl) for cl in c.claims)})"

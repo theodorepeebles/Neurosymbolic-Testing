@@ -41,7 +41,7 @@ primitives below. Do not invent relationships outside this vocabulary.
 ORDERING — entities occupy distinct positions in slots numbered 1..N (1-INDEXED):
   - before(X, Y): X is in an earlier slot than Y
   - immediately_before(X, Y): X is exactly one slot before Y
-  - not_adjacent(X, Y): |slot(X) - slot(Y)| > 1
+  - adjacent(X, Y): |slot(X) - slot(Y)| == 1
   - slot_fixed(X, k): X is in slot k (k is 1-indexed, 1..N)
 
 KNIGHTS_AND_KNAVES — each character is a truth-teller (always true statements) or a
@@ -55,6 +55,7 @@ GROUPING — entities are partitioned into G groups of fixed sizes (groups 1-IND
   - same_group(X, Y, ...): listed entities share a group
   - different_group(X, Y, ...): listed entities are all in distinct groups
   - exactly_n(entities, n, group): exactly n of the listed entities are in group k
+  - is_in(X, k): X is in group k (1-indexed)
 
 LOGICAL WRAPPERS — combine or negate any of the above:
   - not(claim)
@@ -130,7 +131,7 @@ extracted_json must follow this exact structure:
 ORDERING:
   {"type": "before", "left": "X", "right": "Y"}
   {"type": "immediately_before", "left": "X", "right": "Y"}
-  {"type": "not_adjacent", "left": "X", "right": "Y"}
+  {"type": "adjacent", "left": "X", "right": "Y"}
   {"type": "slot_fixed", "entity": "X", "slot": <integer>}
   *** SLOTS ARE 1-INDEXED. slot 1 = first position. NEVER use slot 0. NEVER use strings for slot values. ***
   *** type string is "slot_fixed" — NEVER "slot_filled" or anything else ***
@@ -150,6 +151,7 @@ GROUPING:
   {"type": "same_group", "entities": ["X", "Y"]}
   {"type": "different_group", "entities": ["X", "Y"]}
   {"type": "exactly_n", "entities": [...], "n": <int>, "group": <int>}
+  {"type": "is_in", "entity": "X", "group": <int>}
   *** GROUPS ARE 1-INDEXED. NEVER use 0. ***
 
 LOGICAL WRAPPERS:

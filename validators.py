@@ -6,7 +6,7 @@ from typing import Annotated, Union, Optional, Literal
 
 class BinaryOrdering(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["before", "immediately_before", "not_adjacent"]
+    type: Literal["before", "immediately_before", "adjacent"]
     left: str
     right: str
 
@@ -33,13 +33,19 @@ class ExactlyN(BaseModel):
     n: int
     group: Optional[int] = None
 
+class IsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["is_in"]
+    entity: str
+    group: int
+
 
 # --- Registry: domain -> LIST of leaf classes ---
 
 DOMAIN_CONSTRAINT_CLASSES = {
     "ordering":           [BinaryOrdering, SlotFixed],
     "knights_and_knaves": [KKConstraint],
-    "grouping":           [GroupRelation, ExactlyN],
+    "grouping":           [GroupRelation, ExactlyN, IsIn],
 }
 
 DOMAIN_LP_FIELDS = {
