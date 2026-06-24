@@ -16,15 +16,13 @@ errors because it only touches surface prose.
 
 The training target is problem_text -> extracted_json, consistent with the
 existing pipeline. The extraction model never predicts answers directly -- Z3
-computes them from extracted_json at inference time. The correct answer label
-is therefore NOT stored in sft_positives.jsonl; it is recorded in logic_runs.db
-only, where it serves as ground truth for end-to-end NS pipeline evaluation on
-a separate held-out test set that never enters this pipeline.
+computes them from extracted_json at inference time. The correct answer label is
+therefore NOT stored on the row; the testing harness (run.py) re-derives ground
+truth by Z3-solving the gold extraction.
 
-Output appends to both sft_positives.jsonl and logic_runs.db directly.
-export_log.py is intentionally bypassed: it overwrites sft_positives.jsonl on
-every run, but 300+ manually-generated rows already exist in the file that are
-not in logic_runs.db. Direct dual-write here preserves those rows.
+Output appends only to sft_dataset.jsonl (the full dataset). It is decoupled from
+the SQLite DB: split_dataset.py later carves this file into sft_train.jsonl /
+sft_test.jsonl, and sft_test.db is populated only by run.py during evaluation.
 """
 
 import json
@@ -45,8 +43,7 @@ from z3 import (
 )
 
 from validators import build_hybrid_schema, DOMAIN_LP_FIELDS
-from pipeline import encode, ask_llm, constraint_type_counts
-from logger import log_attempt, init_db, new_run_id, DB_PATH
+from pipeline import encode, ask_llm
 
 try:
     from google import genai
@@ -78,12 +75,7 @@ QUESTION_CONSTRAINTS_MAX = 1
 MAX_PARAPHRASE_RETRIES   = 3
 MAX_QUESTION_RETRIES     = 10
 
-SFT_OUT              = "../data/sft_positives.jsonl"
-SEND_TO_SFT_POSITIVES = False   # write to sft_positives.jsonl
-SEND_TO_TEST_SUITE    = True  # append entry to test_suite.py + test_suite_data.jsonl
-
-TEST_SUITE_PY_OUT   = "test_suite.py"               # relative to logic/ (same dir as this file)
-TEST_SUITE_DATA_OUT = "../data/test_suite_data.jsonl"
+SFT_OUT              = "../data/sft_dataset.jsonl"  # the full dataset; split later by split_dataset.py
 
 PARAPHRASE_BACKEND   = "gemini"            # "gemini" | "ollama"
 PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
@@ -887,8 +879,8 @@ def generate_question(surviving_clues: list, pruned_clues: list,
             continue  # not enough valid distractors -- retry
 
         # 5e: assemble choices, shuffle correct position, assign labels
-        # correct_label stored for SQLite; intentionally omitted from sft_positives.jsonl
-        # (see module docstring -- extraction model is trained on problem_text -> extracted_json)
+        # correct_label is not persisted -- the extraction model is trained on
+        # problem_text -> extracted_json, and Z3 re-derives the answer at eval time
         choices = (
             [(correct_value_dict, correct_type, True)]
             + [(v, t, False) for v, t in distractors[:actual_num_choices - 1]]
@@ -1202,87 +1194,29 @@ def verify_paraphrase(text: str, extracted, question_info: dict,
 
 
 # ==============================================================================
-# PHASE 8 -- LOG AND EMIT
+# PHASE 8 -- EMIT
 #
-# Writes to logic_runs.db (always), sft_positives.jsonl (if SEND_TO_SFT_POSITIVES),
-# and/or test_suite.py + test_suite_data.jsonl (if SEND_TO_TEST_SUITE).
-# export_log.py is intentionally bypassed -- it overwrites sft_positives.jsonl
-# on every run, but 300+ manually-generated rows already exist in the file that
-# are not in logic_runs.db. Direct dual-write here preserves those rows.
+# Appends one row to sft_dataset.jsonl (the full dataset). The dataset is now
+# decoupled from the SQLite DB: split_dataset.py carves this file into train/test,
+# and sft_test.db is populated only later, by run.py, during model evaluation.
+# The answer is NOT stored: the training target is problem_text -> extracted_json,
+# and run.py re-derives ground truth by Z3-solving the gold extraction.
 # ==============================================================================
-
-def _append_to_test_suite_py(problem_text: str, correct_label: str, path: str) -> None:
-    """Insert one dict entry into the test_suite list in test_suite.py."""
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    entry = (
-        f"\n    {{\n"
-        f"        \"problem\": {json.dumps(problem_text)},\n"
-        f"        \"answer\": {json.dumps(correct_label)}  # algorithmically generated\n"
-        f"    }},\n"
-    )
-    last_bracket = content.rfind("]")
-    if last_bracket == -1:
-        raise ValueError(f"Could not find closing ] in {path}")
-    new_content = content[:last_bracket] + entry + content[last_bracket:]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-
 
 def log_and_emit(problem_text: str, extracted, question_info: dict,
                  active_domains: list, run_id: str) -> None:
-    """Write one row to SQLite (always) and conditionally to sft_positives.jsonl
-    and/or test_suite.py + test_suite_data.jsonl based on the routing flags.
-    """
-    extracted_json_str = json.dumps(extracted.model_dump())
-    model_name         = f"algorithmic_{PARAPHRASE_MODEL}"
-    ts                 = datetime.now(timezone.utc).isoformat()
-    correct_label      = question_info["correct_label"]
-
-    # 8a: SQLite -- always written; includes ground_truth_answer for evaluation
-    log_attempt(
-        run_id=run_id,
-        attempt_number=1,
-        problem_text=problem_text,
-        active_domains=active_domains,
-        extracted_json=extracted_json_str,
-        schema_valid=True,
-        z3_result="SAT",
-        answer_correct=True,
-        ground_truth_answer=correct_label,
-        model_name=model_name,
-        constraint_type_counts=constraint_type_counts(extracted),
-    )
-
-    # 8b: sft_positives.jsonl -- correct_answer intentionally omitted; extraction
-    # model trains on problem_text -> extracted_json; Z3 computes the answer
-    if SEND_TO_SFT_POSITIVES:
-        row = {
-            "run_id":         run_id,
-            "problem_text":   problem_text,
-            "active_domains": json.dumps(active_domains),
-            "extracted_json": extracted_json_str,
-            "model_name":     model_name,
-            "timestamp":      ts,
-        }
-        with open(SFT_OUT, "a") as f:
-            f.write(json.dumps(row) + "\n")
-
-    # 8c: test_suite.py + test_suite_data.jsonl -- includes ground_truth_answer
-    if SEND_TO_TEST_SUITE:
-        _append_to_test_suite_py(problem_text, correct_label, TEST_SUITE_PY_OUT)
-
-        ts_data_row = {
-            "run_id":               run_id,
-            "problem_text":         problem_text,
-            "active_domains":       json.dumps(active_domains),
-            "extracted_json":       extracted_json_str,
-            "model_name":           model_name,
-            "timestamp":            ts,
-            "ground_truth_answer":  correct_label,
-        }
-        with open(TEST_SUITE_DATA_OUT, "a") as f:
-            f.write(json.dumps(ts_data_row) + "\n")
+    """Append one gold row to sft_dataset.jsonl. (question_info is unused — the
+    answer is derived from the extraction by Z3 at evaluation time, not stored.)"""
+    row = {
+        "run_id":         run_id,
+        "problem_text":   problem_text,
+        "active_domains": json.dumps(active_domains),
+        "extracted_json": json.dumps(extracted.model_dump()),
+        "model_name":     f"algorithmic_{PARAPHRASE_MODEL}",
+        "timestamp":      datetime.now(timezone.utc).isoformat(),
+    }
+    with open(SFT_OUT, "a") as f:
+        f.write(json.dumps(row) + "\n")
 
 
 # ==============================================================================
@@ -1360,18 +1294,15 @@ def generate_one_puzzle():
     if problem_text is None:
         return None
 
-    return problem_text, extracted, question_info, active_domains, new_run_id()
+    return problem_text, extracted, question_info, active_domains, uuid.uuid4().hex
 
 
 def main(target: int) -> None:
-    init_db()
-    # seen always reflects sft_positives.jsonl — used to block training-data
-    # contamination regardless of which output flags are active
+    # seen reflects sft_dataset.jsonl — blocks duplicate problems across runs
     seen = load_seen_hashes(SFT_OUT)
     kept = 0
-    test_suite_seen = set()  # deduplicates test_suite writes within this run
     print(f"Starting -- target: {target} "
-          f"| sft_positives: {SEND_TO_SFT_POSITIVES} | test_suite: {SEND_TO_TEST_SUITE} "
+          f"| out: {SFT_OUT} "
           f"| backend: {PARAPHRASE_BACKEND}/{PARAPHRASE_MODEL}")
 
     while kept < target:
@@ -1381,14 +1312,9 @@ def main(target: int) -> None:
         problem_text, extracted, question_info, active_domains, run_id = result
         h = fp(problem_text)
         if h in seen:
-            continue  # already in training data — never add to test suite either
-        if SEND_TO_TEST_SUITE and h in test_suite_seen:
-            continue  # already written to test_suite in this run
+            continue  # already in the dataset
         log_and_emit(problem_text, extracted, question_info, active_domains, run_id)
-        if SEND_TO_SFT_POSITIVES:
-            seen.add(h)
-        if SEND_TO_TEST_SUITE:
-            test_suite_seen.add(h)
+        seen.add(h)
         kept += 1
         print(f"kept {kept}/{target}  |  domains: {active_domains}"
               f"  |  correct: {question_info['correct_label']}")

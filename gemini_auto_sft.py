@@ -11,7 +11,7 @@ from pipeline import z3_solve
 client           = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 GENERATION_MODEL = "gemini-3.5-flash"
 EXTRACTION_MODEL = "gemini-3.1-flash-lite"
-SFT_OUT          = "../data/sft_positives.jsonl"  # output file; also doubles as the resume checkpoint
+SFT_OUT          = "../data/sft_dataset.jsonl"  # output file; also doubles as the resume checkpoint
 BATCH_SIZE     = 3
 INCLUDE_EASY   = False
 INCLUDE_MEDIUM = True

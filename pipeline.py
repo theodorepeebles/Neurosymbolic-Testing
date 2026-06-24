@@ -665,7 +665,7 @@ def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None =
     try:
         # ── TEMPORARY TEST OVERRIDE ───────────────────────────────────────────
         # Skips the LLM classifier. Uses active_domains injected by the caller
-        # (loaded from test_suite_data.jsonl in run.py) so each problem gets its
+        # (read from each sft_test.jsonl row in run.py) so each problem gets its
         # ground-truth domains rather than a classifier prediction. Remove this
         # block and uncomment STEP 1 below to restore normal classifier flow.
         # ── END TEMPORARY TEST OVERRIDE ──────────────────────────────────────

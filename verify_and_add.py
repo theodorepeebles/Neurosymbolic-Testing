@@ -2,7 +2,7 @@
 Usage:
     python verify_and_add.py input.jsonl
 Reads rows with {problem_text, answer, active_domains, extracted_json, model_name},
-Z3-verifies each, appends passing rows to sft_positives.jsonl.
+Z3-verifies each, appends passing rows to sft_dataset.jsonl.
 """
 
 import json
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from validators import build_hybrid_schema
 from pipeline import z3_solve
 
-SFT_OUT = "data/sft_positives.jsonl"
+SFT_OUT = "data/sft_dataset.jsonl"
 
 def verify_file(input_path: str):
     with open(input_path) as f:

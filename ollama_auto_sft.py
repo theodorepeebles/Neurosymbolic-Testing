@@ -8,7 +8,7 @@ from pipeline import ask_llm, extract_logic_problem, classify_domains, z3_solve,
 GENERATION_MODEL     = "gpt-oss:120b-cloud"
 CLASSIFICATION_MODEL = "gemma4:31b-cloud"
 EXTRACTION_MODEL     = "gpt-oss:120b-cloud"
-SFT_OUT        = "../data/sft_positives.jsonl"
+SFT_OUT        = "../data/sft_dataset.jsonl"
 INCLUDE_EASY   = False
 INCLUDE_MEDIUM = False
 INCLUDE_HARD   = True

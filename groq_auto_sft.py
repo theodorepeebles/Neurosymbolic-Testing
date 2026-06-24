@@ -48,7 +48,7 @@ client = OpenAI(
 
 GENERATION_MODEL = "openai/gpt-oss-120b"
 EXTRACTION_MODEL = "openai/gpt-oss-120b"
-SFT_OUT          = "../data/sft_positives.jsonl"
+SFT_OUT          = "../data/sft_dataset.jsonl"
 INCLUDE_EASY     = True
 INCLUDE_MEDIUM   = True
 INCLUDE_HARD     = True

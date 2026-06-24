@@ -1,9 +1,11 @@
 """
 SQLite logger for the neurosymbolic logic puzzle pipeline.
 
-One row per pipeline run (the final accepted extraction + its correctness).
-Schema is forward-compatible with per-attempt logging for DPO: run_id groups
-attempts, attempt_number orders them. Standard library only.
+This database is the **testing / validation log** (sft_test.db). It is populated by
+run.py when a trained extraction model is evaluated over sft_test.jsonl: one row per
+(test example x model), recording how the model's extraction compared against the gold
+extraction stored in the dataset row. It is NOT written to during dataset generation —
+the dataset (sft_dataset.jsonl) and this DB are deliberately decoupled.
 
 Stored-type notes (SQLite has no native bool/uuid/datetime):
   - booleans  -> INTEGER 0/1 (NULL allowed for "unknown")
@@ -16,31 +18,133 @@ import sqlite3
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
 # all callers of this module live in NS_Math/logic/, so the path is relative to that directory
-DB_PATH = "../data/logic_runs.db"
+DB_PATH = "../data/sft_test.db"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS extraction_attempts (
-    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id                 TEXT    NOT NULL,   -- groups all attempts for one problem
-    attempt_number         INTEGER NOT NULL,   -- 1-indexed; always 1 in one-row-per-run mode
-    problem_text           TEXT    NOT NULL,
-    active_domains         TEXT    NOT NULL,   -- JSON array, e.g. ["ordering","grouping"]
-    extracted_json         TEXT,               -- canonical JSON of the LogicProblem (NULL if extraction failed)
-    schema_valid           INTEGER NOT NULL,   -- 0/1: did a LogicProblem object get built
-    z3_result              TEXT,               -- 'SAT' | 'UNSAT' | 'UNKNOWN' | 'ERROR' | NULL
-    answer_correct         INTEGER,            -- 0/1/NULL: matched ground truth
-    ground_truth_answer    TEXT,
-    constraint_type_counts TEXT,               -- JSON object, nullable (derivable from extracted_json)
-    model_name             TEXT    NOT NULL,
-    timestamp              TEXT    NOT NULL    -- ISO 8601 UTC
+    -- ==========================================
+    -- [CORE IDENTIFIERS & METADATA]
+    -- ==========================================
+    id                                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                                TEXT    NOT NULL,
+    attempt_number                        INTEGER NOT NULL,
+    extraction_model_name                 TEXT    NOT NULL,
+    timestamp                             TEXT    NOT NULL,
+    environment                           TEXT    NOT NULL, -- 'controlled' (expected known) or 'real_world' (expected NULL)
+
+    -- ==========================================
+    -- [INPUT PRIMITIVES & TEXT METRICS]
+    -- ==========================================
+    problem_text                          TEXT    NOT NULL,
+    active_domains                        TEXT    NOT NULL,
+    prompt_token_count                    INTEGER,
+    text_word_count                       INTEGER,          -- Raw word count of the problem text
+    text_lexical_density                  REAL,             -- Measure of unique vocabulary to track prompt complexity
+
+    -- ==========================================
+    -- [ENTITY & DOMAIN BOUNDARY COMPARISONS]
+    -- ==========================================
+    expected_entity_count                 INTEGER,
+    extracted_entity_count                INTEGER,
+    exact_entity_match                    INTEGER,          -- 0/1: Set equality (Order-agnostic: ["Sam","Bob"] == ["Bob","Sam"])
+
+    expected_slot_count                   INTEGER,          -- Populated if 'ordering' active
+    extracted_slot_count                  INTEGER,
+
+    expected_group_count                  INTEGER,          -- Populated if 'grouping' active
+    extracted_group_count                 INTEGER,
+
+    -- ==========================================
+    -- [GLOBAL CONSTRAINT COMPARISONS]
+    -- ==========================================
+    expected_global_constraint_count      INTEGER,
+    extracted_global_constraint_count     INTEGER,
+    exact_global_constraint_match         INTEGER,          -- 0/1: Semantic set equality of the constraint objects, ignoring JSON array order
+
+    -- ==========================================
+    -- [QUESTION CONSTRAINT COMPARISONS]
+    -- ==========================================
+    expected_question_constraint_count    INTEGER,
+    extracted_question_constraint_count   INTEGER,
+    exact_question_constraint_match       INTEGER,          -- 0/1: Semantic set equality of the constraint objects, ignoring JSON array order
+
+    -- ==========================================
+    -- [ANSWER CHOICE COMPARISONS]
+    -- ==========================================
+    expected_choice_count                 INTEGER,
+    extracted_choice_count                INTEGER,
+
+    expected_choice_constraint_count      INTEGER,          -- Total constraints across all A/B/C/D blocks
+    extracted_choice_constraint_count     INTEGER,
+    exact_choice_constraint_match         INTEGER,          -- 0/1: Semantic set equality of the constraint objects, ignoring JSON array order
+
+    -- ==========================================
+    -- [LOGICAL COMPLEXITY TRACKING]
+    -- ==========================================
+    expected_logical_wrapper_count        INTEGER,          -- Counts of nested wrappers ('if_then', 'not', 'or', 'and')
+    extracted_logical_wrapper_count       INTEGER,
+
+    -- ==========================================
+    -- [RAW OUTPUT & EVALUATION RESULTS]
+    -- ==========================================
+    extracted_json                        TEXT,
+    schema_valid                          INTEGER NOT NULL,
+    constraint_type_counts                TEXT,             -- JSON dict mapping rule primitives to counts
+
+    z3_result                             TEXT,             -- 'SAT' | 'UNSAT' | 'UNKNOWN' | 'ERROR' | NULL
+    answer_correct                        INTEGER,
+    ground_truth_answer                   TEXT,
+    error_traceback                       TEXT,
+
+    -- ==========================================
+    -- [PERFORMANCE TRACKING]
+    -- ==========================================
+    completion_token_count                INTEGER,
+    generation_time_ms                    INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_id   ON extraction_attempts(run_id);
 CREATE INDEX IF NOT EXISTS idx_correct  ON extraction_attempts(answer_correct);
 """
+
+# Every insertable column, in DDL order, excluding the autoincrement `id`.
+# log_attempt builds its INSERT from this list, so adding a column means editing
+# the DDL above and this list only.
+COLUMNS = [
+    "run_id", "attempt_number", "extraction_model_name", "timestamp", "environment",
+    "problem_text", "active_domains", "prompt_token_count", "text_word_count",
+    "text_lexical_density",
+    "expected_entity_count", "extracted_entity_count", "exact_entity_match",
+    "expected_slot_count", "extracted_slot_count",
+    "expected_group_count", "extracted_group_count",
+    "expected_global_constraint_count", "extracted_global_constraint_count",
+    "exact_global_constraint_match",
+    "expected_question_constraint_count", "extracted_question_constraint_count",
+    "exact_question_constraint_match",
+    "expected_choice_count", "extracted_choice_count",
+    "expected_choice_constraint_count", "extracted_choice_constraint_count",
+    "exact_choice_constraint_match",
+    "expected_logical_wrapper_count", "extracted_logical_wrapper_count",
+    "extracted_json", "schema_valid", "constraint_type_counts",
+    "z3_result", "answer_correct", "ground_truth_answer", "error_traceback",
+    "completion_token_count", "generation_time_ms",
+]
+
+# Columns declared NOT NULL in the DDL — must be present (non-None) in every row.
+_REQUIRED = {
+    "run_id", "attempt_number", "extraction_model_name", "timestamp", "environment",
+    "problem_text", "active_domains", "schema_valid",
+}
+
+# Columns stored as JSON text; dicts/lists are json.dumps'd on the way in.
+_JSON_COLUMNS = {"active_domains", "constraint_type_counts"}
+
+# Columns that hold booleans in Python but INTEGER 0/1 in SQLite.
+_BOOL_COLUMNS = {"exact_entity_match", "exact_global_constraint_match",
+                 "exact_question_constraint_match", "exact_choice_constraint_match",
+                 "schema_valid", "answer_correct"}
 
 
 def init_db(db_path: str = DB_PATH) -> None:
@@ -58,103 +162,38 @@ def new_run_id() -> str:
     return uuid.uuid4().hex
 
 
-def log_attempt(
-    run_id: str,
-    attempt_number: int,
-    problem_text: str,
-    active_domains: list[str],
-    extracted_json: Optional[str],
-    schema_valid: bool,
-    z3_result: Optional[str],
-    answer_correct: Optional[bool],
-    ground_truth_answer: Optional[str],
-    model_name: str,
-    constraint_type_counts: Optional[dict] = None,
-    db_path: str = DB_PATH,
-) -> None:
-    """Insert one row. Open/commit/close per call — fine at this volume."""
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            """
-            INSERT INTO extraction_attempts (
-                run_id, attempt_number, problem_text, active_domains,
-                extracted_json, schema_valid, z3_result, answer_correct,
-                ground_truth_answer, constraint_type_counts, model_name, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                attempt_number,
-                problem_text,
-                json.dumps(active_domains),
-                extracted_json,
-                int(schema_valid),
-                z3_result,
-                None if answer_correct is None else int(answer_correct),
-                ground_truth_answer,
-                None if constraint_type_counts is None else json.dumps(constraint_type_counts),
-                model_name,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+def _coerce(col: str, value):
+    """Convert a Python value to its SQLite-storable form for column `col`."""
+    if value is None:
+        return None
+    if col in _JSON_COLUMNS and not isinstance(value, str):
+        return json.dumps(value)
+    if col in _BOOL_COLUMNS and isinstance(value, bool):
+        return int(value)
+    return value
 
 
-def _categorize() -> str:
-    """SQL CASE block for labeling rows by training data type."""
-    return """
-        CASE
-            WHEN answer_correct = 1 AND extracted_json IS NOT NULL THEN 'sft_positive'
-            WHEN schema_valid = 1 AND z3_result = 'SAT'  AND answer_correct = 0 THEN 'dpo_logical_fail'
-            WHEN schema_valid = 1 AND z3_result = 'UNSAT'                       THEN 'dpo_unsat_negative'
-            ELSE 'unusable'
-        END as category
+def log_attempt(row: dict, db_path: str = DB_PATH) -> None:
+    """Insert one row from a dict keyed by column name.
+
+    Callers (run.py) compute the full comparison row and hand it over here. Missing
+    optional columns default to NULL; `timestamp` defaults to now (UTC). Open/commit/
+    close per call — fine at this volume.
     """
+    row = dict(row)
+    row.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
 
+    missing = [c for c in _REQUIRED if row.get(c) is None]
+    if missing:
+        raise ValueError(f"log_attempt missing required column(s): {missing}")
 
-def export_sft_positives(output_path: str = "data/sft_positives.jsonl", db_path: str = DB_PATH) -> int:
-    """Export only correct extractions. Gold SFT training examples.
-        Returns the number of exported rows. """
+    values = [_coerce(c, row.get(c)) for c in COLUMNS]
+    placeholders = ", ".join("?" for _ in COLUMNS)
+    sql = f"INSERT INTO extraction_attempts ({', '.join(COLUMNS)}) VALUES ({placeholders})"
+
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            """
-            SELECT run_id, problem_text, active_domains,
-                   extracted_json, model_name, timestamp
-            FROM extraction_attempts
-            WHERE answer_correct = 1
-              AND extracted_json IS NOT NULL
-            ORDER BY timestamp
-            """
-        ).fetchall()
-        with open(output_path, "w") as f:
-            for row in rows:
-                f.write(json.dumps(dict(row)) + "\n")
-        return len(rows)
-    finally:
-        conn.close()
-
-
-def export_all(output_path: str = "data/all_attempts.jsonl", db_path: str = DB_PATH) -> int:
-    """Export all rows with a computed category label for downstream filtering.
-        Returns the number of exported rows. """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT *, {_categorize()}
-            FROM extraction_attempts
-            ORDER BY timestamp
-            """
-        ).fetchall()
-        with open(output_path, "w") as f:
-            for row in rows:
-                f.write(json.dumps(dict(row)) + "\n")
-        return len(rows)
+        conn.execute(sql, values)
+        conn.commit()
     finally:
         conn.close()
