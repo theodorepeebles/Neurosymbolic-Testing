@@ -27,27 +27,33 @@ import eval_metrics
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
-NUM_TEST_EXAMPLES = 20
+NUM_TEST_EXAMPLES = None
 
 RUN_BASELINE = False
 
-LOG_TO_DB = False
+LOG_TO_DB = True
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
 MODEL_SETS = [
-    {
+    # {
+    #     "name": "qwen3:0.6b",
+    #     "classifier_llm": "qwen3:8b",
+    #     "extraction_llm": "qwen3:0.6b",
+    #     "formatting_llm": "qwen3:8b",
+    # },
+     {
         "name": "SFT_Extraction_Qwen3_0.6b",
         "classifier_llm": "qwen3:8b",
-        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
+        "extraction_llm": "SFT_Extraction_Qwen3_0.6b",
         "formatting_llm": "qwen3:8b",
     },
-    {
-        "name": "SFT_Extraction_Qwen3_0.6b-v2",
-        "classifier_llm": "qwen3:8b",
-        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
-        "formatting_llm": "qwen3:8b",
-    },
+    #  {
+    #     "name": "SFT_Extraction_Qwen3_0.6b-v2",
+    #     "classifier_llm": "qwen3:8b",
+    #     "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
+    #     "formatting_llm": "qwen3:8b",
+    # },
 ]
 
 # Models that use extract_finetuned (minimal FT_EXTRACTION_SYSTEM prompt).

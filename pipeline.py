@@ -703,16 +703,17 @@ def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None =
 
         result["extracted"] = extracted
 
-        # STEP 3 — Z3 solve, with one UNSAT retry
+        # STEP 3 — Z3 solve
+        # *** UNSAT RETRY DISABLED — comment back in to re-enable ***
         try:
             z3_result = z3_solve(extracted)
-            if z3_result["status"] == "unsat":
-                extracted, z3_result, retry_calls, retry_unmatched = _handle_unsat_retry(
-                    problem, active_domains, extracted, z3_result, extract_fn
-                )
-                result["llm_calls"]             += retry_calls
-                result["unmatched_errors"].extend(retry_unmatched)
-                result["extracted"]              = extracted
+            # if z3_result["status"] == "unsat":
+            #     extracted, z3_result, retry_calls, retry_unmatched = _handle_unsat_retry(
+            #         problem, active_domains, extracted, z3_result, extract_fn
+            #     )
+            #     result["llm_calls"]             += retry_calls
+            #     result["unmatched_errors"].extend(retry_unmatched)
+            #     result["extracted"]              = extracted
         except Exception as e:
             result["formatted_output"] = f"ERROR: {type(e).__name__}: {e}"
             return result
@@ -730,20 +731,27 @@ def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None =
         # STEP 4 — format
         # LLM explains the answer given Z3's verified result
         # placeholder for richer explanation — currently just states the correct label
-        print(f"  Waiting for LLM formatting...")
-        t_fmt_start = time.time()
-        formatted = ask_llm(
-            prompt=(
-            f"Answer this logic puzzle in one sentence. State only the correct answer label and what it means, no working or reasoning. The answer is {z3_result.get('question_results')}.\nLogic puzzle: {problem}"
-            ),
-            system="You answer logic puzzles in one sentence. State only the correct answer label and what it means.",
-            model=formatter_model,
-        )
-        t_fmt_end = time.time()
-        print(f"  Got formatting response ({t_fmt_end - t_fmt_start:.2f}s)")
-
-        result["llm_calls"]        += 1
-        result["formatted_output"]  = formatted
+        # ============================================================================
+        # TEMPORARY: LLM formatting step is commented out to avoid wasting time on it.
+        # RE-ENABLE THIS BLOCK WHEN DONE TESTING. The lines below just stub out the
+        # formatted_output instead of making a real LLM call.
+        # ============================================================================
+        # print(f"  Waiting for LLM formatting...")
+        # t_fmt_start = time.time()
+        # formatted = ask_llm(
+        #     prompt=(
+        #     f"Answer this logic puzzle in one sentence. State only the correct answer label and what it means, no working or reasoning. The answer is {z3_result.get('question_results')}.\nLogic puzzle: {problem}"
+        #     ),
+        #     system="You answer logic puzzles in one sentence. State only the correct answer label and what it means.",
+        #     model=formatter_model,
+        # )
+        # t_fmt_end = time.time()
+        # print(f"  Got formatting response ({t_fmt_end - t_fmt_start:.2f}s)")
+        #
+        # result["llm_calls"]        += 1
+        # result["formatted_output"]  = formatted
+        formatted = None  # TEMPORARY: formatting disabled (see note above)
+        result["formatted_output"] = formatted
 
     except RuntimeError as e:
         print(f"  [!] NS Pipeline failed due to timeout/connection error: {e}")
