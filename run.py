@@ -27,23 +27,25 @@ import eval_metrics
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
-NUM_TEST_EXAMPLES = None
+NUM_TEST_EXAMPLES = 20
 
 RUN_BASELINE = False
+
+LOG_TO_DB = False
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
 MODEL_SETS = [
-    # {
-    #     "name": "qwen3:8b",
-    #     "classifier_llm": "qwen3:8b",
-    #     "extraction_llm": "qwen3:8b",
-    #     "formatting_llm": "qwen3:8b",
-    # },
     {
         "name": "SFT_Extraction_Qwen3_0.6b",
         "classifier_llm": "qwen3:8b",
-        "extraction_llm": "SFT_Extraction_Qwen3_0.6b",
+        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
+        "formatting_llm": "qwen3:8b",
+    },
+    {
+        "name": "SFT_Extraction_Qwen3_0.6b-v2",
+        "classifier_llm": "qwen3:8b",
+        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
         "formatting_llm": "qwen3:8b",
     },
 ]
@@ -94,7 +96,8 @@ def derive_ground_truth(gold: dict, active_domains: list[str]):
         return None
 
 
-init_db()
+if LOG_TO_DB:
+    init_db()
 test_rows = load_test_set(TEST_SET_PATH, NUM_TEST_EXAMPLES)
 total_problems = len(test_rows)
 results = []
@@ -107,7 +110,7 @@ for i, row in enumerate(test_rows, 1):
     run_id         = row.get("run_id") or uuid.uuid4().hex
 
     print(f"\n[{i}/{total_problems}]")
-    print(f"  Problem: {problem[:120]}{'...' if len(problem) > 120 else ''}")
+    print(f"  Problem: {problem}")
 
     record = {
         "problem":        problem,
@@ -188,7 +191,8 @@ for i, row in enumerate(test_rows, 1):
             "completion_token_count": None,
             "generation_time_ms":    gen_ms,
         }
-        log_attempt(db_row)
+        if LOG_TO_DB:
+            log_attempt(db_row)
 
         record["ns_results"][ms["name"]] = {
             "ns_correct": ns_correct,
@@ -196,15 +200,15 @@ for i, row in enumerate(test_rows, 1):
             "exact_global": metrics["exact_global_constraint_match"],
             "gen_ms":     gen_ms,
         }
-        print(f"  Z3: {z3_status}  correct: {ns_correct}  "
-              f"exact_global_match: {metrics['exact_global_constraint_match']}  ({gen_ms} ms)")
+        print(f"  Z3: {z3_status} \n correct: {ns_correct}  "
+              f"exact_global_match: {metrics['exact_global_constraint_match']} \n  ({gen_ms} ms)")
 
     results.append(record)
 
 # ── SUMMARY ───────────────────────────────────────────────────────────────────
 total = len(results)
 print(f"\n{'='*60}")
-print(f"TEST SUMMARY  (logged to sft_test.db)")
+print(f"TEST SUMMARY  ({'logged to sft_test.db' if LOG_TO_DB else 'DB logging disabled'})")
 print(f"{'='*60}")
 print(f"  Total examples : {total}")
 print()
