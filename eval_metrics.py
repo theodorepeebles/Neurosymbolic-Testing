@@ -14,6 +14,21 @@ import json
 
 WRAPPER_TYPES = {"if_then", "not", "and", "or"}
 
+# Every constraint type defined in validators.py, each broken out into its own
+# expected_/extracted_ count column. Keep in sync with validators.py
+# (DOMAIN_CONSTRAINT_CLASSES leaf types + the wrappers built in build_hybrid_schema).
+# Each contributes an `expected_<type>_count` and `extracted_<type>_count` metric.
+COUNTED_CONSTRAINT_TYPES = (
+    # ordering
+    "before", "immediately_before", "adjacent", "slot_fixed",
+    # knights_and_knaves
+    "is_truth_teller", "is_deceiver",
+    # grouping
+    "same_group", "different_group", "exactly_n", "is_in",
+    # logical wrappers
+    "if_then", "not", "and", "or",
+)
+
 
 def get_canonical_set(constraint_list) -> set:
     """Freeze a list of constraint dicts into an order-/key-agnostic set of strings."""
@@ -31,6 +46,30 @@ def _count_wrappers(constraint) -> int:
     for sub in constraint.get("claims", []) or []:
         n += _count_wrappers(sub)
     return n
+
+
+def _count_of_type(constraint, target_type: str) -> int:
+    """Recursively count occurrences of `target_type` within one constraint dict,
+    descending into logical wrappers (if_then / not / and / or) the same way
+    _count_wrappers does, so nested constraints are included."""
+    if not isinstance(constraint, dict):
+        return 0
+    n = 1 if constraint.get("type") == target_type else 0
+    for key in ("antecedent", "consequent", "claim"):
+        if isinstance(constraint.get(key), dict):
+            n += _count_of_type(constraint[key], target_type)
+    for sub in constraint.get("claims", []) or []:
+        n += _count_of_type(sub, target_type)
+    return n
+
+
+def _type_count(p: dict, target_type: str) -> int:
+    """Count occurrences of `target_type` across every constraint in the problem
+    (global + question + choice), recursing into logical wrappers."""
+    return sum(
+        _count_of_type(c, target_type)
+        for c in _global_constraints(p) + _question_constraints(p) + _choice_constraints(p)
+    )
 
 
 def _global_constraints(p: dict) -> list:
@@ -95,7 +134,7 @@ def build_comparison_metrics(expected: dict, extracted, active_domains: list[str
     ordering = "ordering" in active_domains
     grouping = "grouping" in active_domains
 
-    return {
+    metrics = {
         "text_word_count": wc,
         "text_lexical_density": lex,
 
@@ -125,3 +164,10 @@ def build_comparison_metrics(expected: dict, extracted, active_domains: list[str
         "expected_logical_wrapper_count": _wrapper_count(expected),
         "extracted_logical_wrapper_count": _wrapper_count(ext) if has_ext else None,
     }
+
+    # Per-type constraint counts (expected + extracted) across the whole problem.
+    for t in COUNTED_CONSTRAINT_TYPES:
+        metrics[f"expected_{t}_count"]  = _type_count(expected, t)
+        metrics[f"extracted_{t}_count"] = _type_count(ext, t) if has_ext else None
+
+    return metrics

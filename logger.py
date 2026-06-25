@@ -87,6 +87,41 @@ CREATE TABLE IF NOT EXISTS extraction_attempts (
     extracted_logical_wrapper_count       INTEGER,
 
     -- ==========================================
+    -- [CONSTRAINT TYPE BREAKDOWN]
+    -- Per-type counts across all parts of the problem (global + question + choice),
+    -- recursing into logical wrappers. One pair per type defined in validators.py.
+    -- See eval_metrics.COUNTED_CONSTRAINT_TYPES.
+    -- ==========================================
+    expected_before_count                 INTEGER,
+    extracted_before_count                INTEGER,
+    expected_immediately_before_count     INTEGER,
+    extracted_immediately_before_count    INTEGER,
+    expected_adjacent_count               INTEGER,
+    extracted_adjacent_count              INTEGER,
+    expected_slot_fixed_count             INTEGER,
+    extracted_slot_fixed_count            INTEGER,
+    expected_is_truth_teller_count        INTEGER,
+    extracted_is_truth_teller_count       INTEGER,
+    expected_is_deceiver_count            INTEGER,
+    extracted_is_deceiver_count           INTEGER,
+    expected_same_group_count             INTEGER,
+    extracted_same_group_count            INTEGER,
+    expected_different_group_count        INTEGER,
+    extracted_different_group_count       INTEGER,
+    expected_exactly_n_count              INTEGER,
+    extracted_exactly_n_count             INTEGER,
+    expected_is_in_count                  INTEGER,
+    extracted_is_in_count                 INTEGER,
+    expected_if_then_count                INTEGER,
+    extracted_if_then_count               INTEGER,
+    expected_not_count                    INTEGER,
+    extracted_not_count                   INTEGER,
+    expected_and_count                    INTEGER,
+    extracted_and_count                   INTEGER,
+    expected_or_count                     INTEGER,
+    extracted_or_count                    INTEGER,
+
+    -- ==========================================
     -- [RAW OUTPUT & EVALUATION RESULTS]
     -- ==========================================
     extracted_json                        TEXT,
@@ -127,6 +162,20 @@ COLUMNS = [
     "expected_choice_constraint_count", "extracted_choice_constraint_count",
     "exact_choice_constraint_match",
     "expected_logical_wrapper_count", "extracted_logical_wrapper_count",
+    "expected_before_count", "extracted_before_count",
+    "expected_immediately_before_count", "extracted_immediately_before_count",
+    "expected_adjacent_count", "extracted_adjacent_count",
+    "expected_slot_fixed_count", "extracted_slot_fixed_count",
+    "expected_is_truth_teller_count", "extracted_is_truth_teller_count",
+    "expected_is_deceiver_count", "extracted_is_deceiver_count",
+    "expected_same_group_count", "extracted_same_group_count",
+    "expected_different_group_count", "extracted_different_group_count",
+    "expected_exactly_n_count", "extracted_exactly_n_count",
+    "expected_is_in_count", "extracted_is_in_count",
+    "expected_if_then_count", "extracted_if_then_count",
+    "expected_not_count", "extracted_not_count",
+    "expected_and_count", "extracted_and_count",
+    "expected_or_count", "extracted_or_count",
     "extracted_json", "schema_valid", "constraint_type_counts",
     "z3_result", "answer_correct", "ground_truth_answer", "error_traceback",
     "completion_token_count", "generation_time_ms",
@@ -146,12 +195,39 @@ _BOOL_COLUMNS = {"exact_entity_match", "exact_global_constraint_match",
                  "exact_question_constraint_match", "exact_choice_constraint_match",
                  "schema_valid", "answer_correct"}
 
+# SQLite affinity per column, used only by the auto-migration below. Anything not
+# listed here is added as INTEGER (all the count columns).
+_NON_INTEGER_TYPES = {
+    "run_id": "TEXT", "extraction_model_name": "TEXT", "timestamp": "TEXT",
+    "environment": "TEXT", "problem_text": "TEXT", "active_domains": "TEXT",
+    "text_lexical_density": "REAL", "extracted_json": "TEXT",
+    "constraint_type_counts": "TEXT", "z3_result": "TEXT",
+    "ground_truth_answer": "TEXT", "error_traceback": "TEXT",
+}
+
+
+def _ensure_columns(conn) -> None:
+    """Add any COLUMNS missing from an existing table (idempotent migration).
+
+    `CREATE TABLE IF NOT EXISTS` leaves a pre-existing table untouched, so new
+    columns added to the DDL/COLUMNS list won't appear on an old sft_test.db
+    without this. ALTER TABLE ADD COLUMN appends nullable columns (existing rows
+    get NULL), which is exactly the behaviour we want.
+    """
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(extraction_attempts)")}
+    for col in COLUMNS:
+        if col not in existing:
+            col_type = _NON_INTEGER_TYPES.get(col, "INTEGER")
+            conn.execute(f"ALTER TABLE extraction_attempts ADD COLUMN {col} {col_type}")
+
 
 def init_db(db_path: str = DB_PATH) -> None:
-    """Create the table and indexes if they don't exist. Idempotent."""
+    """Create the table and indexes if they don't exist, then migrate in any new
+    columns. Idempotent."""
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(DDL)
+        _ensure_columns(conn)
         conn.commit()
     finally:
         conn.close()
