@@ -77,8 +77,8 @@ MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_dataset.jsonl"  # the full dataset; split later by split_dataset.py
 
-PARAPHRASE_BACKEND   = "gemini"            # "gemini" | "ollama"
-PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
+PARAPHRASE_BACKEND   = "ollama"            # "gemini" | "ollama"
+PARAPHRASE_MODEL     = "gpt-oss:20b-cloud"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
                                                 # for gemini use "gemini-3.1-flash-lite"
 
 KK_SPEECH_ACT_MAX    = 2     # max speech act PAIRS added post-pruning (= 4 constraints total)
@@ -1301,25 +1301,29 @@ def generate_one_puzzle():
 
 
 def main(target: int) -> None:
-    # seen reflects sft_dataset.jsonl — blocks duplicate problems across runs
-    seen = load_seen_hashes(SFT_OUT)
-    kept = 0
-    print(f"Starting -- target: {target} "
+    # seen reflects sft_dataset.jsonl — blocks duplicate problems across runs.
+    # `target` is the desired TOTAL number of rows in the dataset: rows already
+    # present count toward it, so we only generate enough to reach `target`.
+    seen     = load_seen_hashes(SFT_OUT)
+    existing = len(seen)
+    added    = 0
+    print(f"Starting -- target total: {target} "
+          f"| already have: {existing} | need: {max(0, target - existing)} "
           f"| out: {SFT_OUT} "
           f"| backend: {PARAPHRASE_BACKEND}/{PARAPHRASE_MODEL}")
 
-    while kept < target:
+    while existing + added < target:
         result = generate_one_puzzle()
         if result is None:
             continue
         problem_text, extracted, question_info, active_domains, run_id = result
         h = fp(problem_text)
         if h in seen:
-            continue  # already in the dataset
+            continue  # duplicate problem text — already in the dataset
         log_and_emit(problem_text, extracted, question_info, active_domains, run_id)
         seen.add(h)
-        kept += 1
-        print(f"kept {kept}/{target}  |  domains: {active_domains}"
+        added += 1
+        print(f"added {added}  |  total {existing + added}/{target}  |  domains: {active_domains}"
               f"  |  correct: {question_info['correct_label']}")
 
 
