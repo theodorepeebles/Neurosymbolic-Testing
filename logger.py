@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS extraction_attempts (
     -- ==========================================
     -- [RAW OUTPUT & EVALUATION RESULTS]
     -- ==========================================
+    expected_json                         TEXT,             -- Gold extraction (run_id-keyed); makes the DB self-contained / decoupled from sft_test.jsonl
     extracted_json                        TEXT,
     schema_valid                          INTEGER NOT NULL,
     constraint_type_counts                TEXT,             -- JSON dict mapping rule primitives to counts
@@ -176,7 +177,7 @@ COLUMNS = [
     "expected_not_count", "extracted_not_count",
     "expected_and_count", "extracted_and_count",
     "expected_or_count", "extracted_or_count",
-    "extracted_json", "schema_valid", "constraint_type_counts",
+    "expected_json", "extracted_json", "schema_valid", "constraint_type_counts",
     "z3_result", "answer_correct", "ground_truth_answer", "error_traceback",
     "completion_token_count", "generation_time_ms",
 ]
@@ -188,7 +189,7 @@ _REQUIRED = {
 }
 
 # Columns stored as JSON text; dicts/lists are json.dumps'd on the way in.
-_JSON_COLUMNS = {"active_domains", "constraint_type_counts"}
+_JSON_COLUMNS = {"active_domains", "constraint_type_counts", "expected_json"}
 
 # Columns that hold booleans in Python but INTEGER 0/1 in SQLite.
 _BOOL_COLUMNS = {"exact_entity_match", "exact_global_constraint_match",
@@ -200,7 +201,7 @@ _BOOL_COLUMNS = {"exact_entity_match", "exact_global_constraint_match",
 _NON_INTEGER_TYPES = {
     "run_id": "TEXT", "extraction_model_name": "TEXT", "timestamp": "TEXT",
     "environment": "TEXT", "problem_text": "TEXT", "active_domains": "TEXT",
-    "text_lexical_density": "REAL", "extracted_json": "TEXT",
+    "text_lexical_density": "REAL", "expected_json": "TEXT", "extracted_json": "TEXT",
     "constraint_type_counts": "TEXT", "z3_result": "TEXT",
     "ground_truth_answer": "TEXT", "error_traceback": "TEXT",
 }

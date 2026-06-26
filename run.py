@@ -187,6 +187,12 @@ for i, row in enumerate(test_rows, 1):
             "active_domains":        active_domains,
             "prompt_token_count":    None,
             **metrics,
+            # Gold extraction, stored alongside the model's output so the DB is self-contained
+            # (decoupled from sft_test.jsonl). Keep the dataset's raw string verbatim for diff
+            # fidelity; fall back to serialising the parsed gold dict.
+            "expected_json":         (row["extracted_json"]
+                                      if isinstance(row.get("extracted_json"), str)
+                                      else (json.dumps(gold) if gold is not None else None)),
             "extracted_json":        extracted_json,
             "schema_valid":          extracted_obj is not None,
             "constraint_type_counts": counts,
