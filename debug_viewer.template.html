@@ -79,6 +79,22 @@
   .rep.db .r1{color:var(--purple)}
   .rep .r2{font-size:11px;color:var(--muted)}
 
+  /* ---- sidebar: summary stats ---- */
+  #summary{padding:10px 14px;border-bottom:1px solid var(--border);
+    display:flex;flex-direction:column;gap:8px}
+  #summary .flbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  .sumgroup{display:flex;flex-direction:column;gap:2px}
+  .sumrow{display:flex;align-items:center;gap:8px;font-size:12px;padding:1px 0}
+  .sumrow .dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+  .sumrow .dot.ok{background:var(--pass)}
+  .sumrow .dot.warn{background:var(--warn)}
+  .sumrow .dot.bad{background:var(--fail)}
+  .sumrow .lbl{flex:1;min-width:0;color:var(--fg)}
+  .sumrow.mism .lbl{color:var(--muted)}
+  .sumrow .n{font-family:var(--mono);font-weight:600;color:var(--fg)}
+  .sumrow.mism .n{color:var(--muted)}
+  .sumrow.mism .n.hot{color:var(--fail)}
+
   /* ---- sidebar: filters ---- */
   #filters{padding:10px 14px;border-bottom:1px solid var(--border);
     display:flex;flex-direction:column;gap:9px}
@@ -87,7 +103,7 @@
   .chips{display:flex;flex-wrap:wrap;gap:5px}
   .chip{font-size:11px;padding:2px 8px;border-radius:20px}
   .chip .pf{color:var(--fail);font-weight:600}
-  .chip.dom{border-radius:6px}
+  .chip.dom{border-radius:6px;display:inline-flex;align-items:center;gap:6px}
 
   /* ---- sidebar: run list ---- */
   #runwrap{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -109,8 +125,10 @@
   /* ---- badges ---- */
   .badge{font-size:10px;padding:1px 7px;border-radius:20px;font-weight:600;flex-shrink:0;
     letter-spacing:.3px}
+  .run .badge{min-width:76px;text-align:center}
   .badge.fail{background:var(--fail-bg);color:var(--fail)}
   .badge.pass{background:var(--pass-bg);color:var(--pass)}
+  .badge.semi{background:var(--warn-bg);color:var(--warn)}
   .badge.na{background:var(--panel3);color:var(--muted)}
   .tag{font-size:11px;padding:1px 8px;border-radius:20px;background:var(--panel3);
     border:1px solid var(--border2);color:var(--muted)}
@@ -212,6 +230,7 @@
 <div id="shell">
   <aside id="sidebar">
     <div id="reps"></div>
+    <div id="summary"></div>
     <div id="filters"></div>
     <div id="runwrap">
       <div id="runhead"><span>Runs</span><span id="runcount"></span></div>
@@ -454,7 +473,9 @@ function renderFilters(rep, st){
   r2.appendChild(el("div","flbl","Domains (exact combo)"));
   const dchips = el("div","chips");
   (rep.domains||[]).forEach(d=>{
-    const b = el("button","chip dom"+(st.domains.has(d)?" on":""), d);
+    const b = el("button","chip dom"+(st.domains.has(d)?" on":""));
+    b.appendChild(el("span","dotdom "+d));   // same color the run list uses for this domain
+    b.appendChild(el("span",null, d));
     b.onclick = ()=>{ st.domains.has(d)?st.domains.delete(d):st.domains.add(d);
                       st.run=null; renderFilters(rep,st); renderRunList(rep,st); };
     dchips.appendChild(b);
@@ -468,9 +489,85 @@ function renderFilters(rep, st){
   r3.appendChild(inp); c.appendChild(r3);
 }
 
+// ---- match / mismatch predicates (mirror the exact_*_match cols analyze.py logs) ---
+// Flags are 0 (mismatch) / 1 (match); treat null/undefined as "not a mismatch".
+function isMismatch(v){ return v === 0; }
+function numOrNull(v){ return (v===null||v===undefined) ? null : Number(v); }
+// Domain axiom = num_slots / num_groups. null both → N/A (match); otherwise differ → mismatch.
+function countDiff(a, b){ a=numOrNull(a); b=numOrNull(b); if (a===null && b===null) return false; return a!==b; }
+function axiomMismatch(row){
+  return countDiff(row.expected_slot_count, row.extracted_slot_count)
+      || countDiff(row.expected_group_count, row.extracted_group_count);
+}
+// "Same extracted JSON" = no detected mismatch in any tracked dimension (order-independent).
+function sameExtraction(row){
+  return !isMismatch(row.exact_entity_match)
+      && !isMismatch(row.exact_global_constraint_match)
+      && !isMismatch(row.exact_question_constraint_match)
+      && !isMismatch(row.exact_choice_constraint_match)
+      && !axiomMismatch(row);
+}
+// Three-way outcome shared by the run-list badge and the Outcomes summary.
+function outcome(row){
+  if (row.answer_correct===1)
+    return sameExtraction(row) ? {cls:"pass",label:"CORRECT"} : {cls:"semi",label:"SEMI"};
+  if (row.answer_correct===0) return {cls:"fail",label:"INCORRECT"};
+  return {cls:"na",label:"—"};
+}
+
+// ---- sidebar: summary stats ------------------------------------------------
+function renderSummary(rows){
+  const box = document.getElementById("summary");
+  box.textContent = "";
+  if (!rows || !rows.length){ box.style.display = "none"; return; }
+  box.style.display = "";
+
+  let correctSame=0, correctDiff=0, incorrect=0;
+  let mEntity=0, mGlobal=0, mQuestion=0, mChoice=0, mAxiom=0;
+  rows.forEach(r=>{
+    if (r.answer_correct===1){ sameExtraction(r) ? correctSame++ : correctDiff++; }
+    else if (r.answer_correct===0) incorrect++;
+    if (isMismatch(r.exact_entity_match)) mEntity++;
+    if (isMismatch(r.exact_global_constraint_match)) mGlobal++;
+    if (isMismatch(r.exact_question_constraint_match)) mQuestion++;
+    if (isMismatch(r.exact_choice_constraint_match)) mChoice++;
+    if (axiomMismatch(r)) mAxiom++;
+  });
+
+  box.appendChild(el("div","flbl", `Outcomes · ${rows.length} runs`));
+  const og = el("div","sumgroup");
+  og.appendChild(sumRow("ok","correct · exact extraction", correctSame));
+  og.appendChild(sumRow("warn","correct · different extraction", correctDiff));
+  og.appendChild(sumRow("bad","incorrect", incorrect));
+  box.appendChild(og);
+
+  box.appendChild(el("div","flbl","Mismatches (rows affected)"));
+  const mg = el("div","sumgroup");
+  mg.appendChild(mismRow("entity", mEntity));
+  mg.appendChild(mismRow("problem constraints", mGlobal));
+  mg.appendChild(mismRow("question constraints", mQuestion));
+  mg.appendChild(mismRow("answer-choice constraints", mChoice));
+  mg.appendChild(mismRow("domain axioms (slots/groups)", mAxiom));
+  box.appendChild(mg);
+}
+function sumRow(dot, label, n){
+  const r = el("div","sumrow");
+  r.appendChild(el("span","dot "+dot));
+  r.appendChild(el("span","lbl", label));
+  r.appendChild(el("span","n", String(n)));
+  return r;
+}
+function mismRow(label, n){
+  const r = el("div","sumrow mism");
+  r.appendChild(el("span","lbl", label));
+  r.appendChild(el("span","n"+(n>0?" hot":""), String(n)));
+  return r;
+}
+
 // ---- sidebar: run list -----------------------------------------------------
 function renderRunList(rep, st){
   const rows = currentRows(rep, st);
+  renderSummary(rows);
   const cnt = document.getElementById("runcount");
   if (cnt) cnt.textContent = `${rows.length}`;
 
@@ -485,8 +582,8 @@ function renderRunList(rep, st){
   const CAP = 1000;
   rows.slice(0,CAP).forEach(row=>{
     const item = el("div","run"+(row.run_id===st.run?" active":""));
-    const ac = row.answer_correct;
-    item.appendChild(el("span","badge "+(ac===1?"pass":ac===0?"fail":"na"), ac===1?"PASS":ac===0?"FAIL":"—"));
+    const oc = outcome(row);   // green/yellow/red, lined up with the Outcomes panel
+    item.appendChild(el("span","badge "+oc.cls, oc.label));
     item.appendChild(el("span","rid", String(row.run_id||"").slice(0,16)));
     const doms = el("span","doms");
     (row.active_domains||[]).forEach(d=>{ const dd=el("span","dotdom "+d); dd.title=d; doms.appendChild(dd); });
@@ -769,6 +866,7 @@ function render(){
   renderReps();
   const rep = activeReport();
   if (!rep){
+    document.getElementById("summary").textContent="";
     document.getElementById("filters").textContent="";
     document.getElementById("runlist").textContent="";
     document.getElementById("runcount").textContent="";
