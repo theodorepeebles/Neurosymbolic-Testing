@@ -951,6 +951,29 @@ def assemble_extracted_json(surviving_clues: list, question_info: dict,
 # PHASE 7 -- LLM PARAPHRASE  (one call; only LLM in pipeline)
 # ==============================================================================
 
+# Evidence-first output contract (shared by both system prompts below). The model first
+# commits to one self-contained sentence per constraint -- clues, the "Given that" question
+# premise, and each answer choice -- then assembles the full puzzle ("problem_text") that
+# contains each of those strings VERBATIM. The verbatim string is stored as evidence_text
+# on the constraint (inject_evidence) -- the gold target the extraction model learns to
+# emit. attribution.py converts that text to a [start, end] span later (substring match);
+# the LLM never computes offsets. See _OUTPUT_CONTRACT for the rules.
+_OUTPUT_CONTRACT = (
+    "Output a single JSON object with exactly these keys:\n"
+    '  "clue_evidence": an array of strings, one per clue, in the SAME order the clues are '
+    "listed. Each is one self-contained sentence stating exactly that clue.\n"
+    '  "question_evidence": a string giving the clause that states the "Given that" question '
+    "premise, or null when no premise is listed.\n"
+    '  "choice_evidence": an object mapping each answer-choice label ("A", "B", ...) to the '
+    "clause in that choice that states its proposition (exclude the label and the [modality] "
+    "tag).\n"
+    '  "problem_text": the complete natural-language puzzle as one string.\n'
+    "HARD REQUIREMENT: every string in clue_evidence, question_evidence, and choice_evidence "
+    "must appear in problem_text as an EXACT, contiguous, verbatim substring. Do NOT split it "
+    "across other text, reword it, change its punctuation or capitalization, or merge two of "
+    "them into one sentence. Write each clue as its own sentence."
+)
+
 PARAPHRASE_SYSTEM = (
     "You render structured logic puzzles as natural language. "
     "Write exactly the puzzle described -- no extra clues, no omissions. "
@@ -959,7 +982,8 @@ PARAPHRASE_SYSTEM = (
     "'If [antecedent], then [consequent]' or 'Whenever [A], [B]'. "
     "Never use causal or consequentialist phrasing such as 'Because A is true, B follows' "
     "or 'Since A, B must be the case' -- that incorrectly implies the antecedent is an "
-    "established fact rather than a hypothetical condition."
+    "established fact rather than a hypothetical condition.\n\n"
+    + _OUTPUT_CONTRACT
 )
 
 PARAPHRASE_SYSTEM_UNIQUE = (
@@ -970,12 +994,16 @@ PARAPHRASE_SYSTEM_UNIQUE = (
     "Do not add or remove any information. "
     "If-then constraints are CONDITIONAL statements -- always phrase them as "
     "'If [antecedent], then [consequent]'. Never use causal phrasing that implies "
-    "the antecedent is an established fact."
+    "the antecedent is an established fact.\n\n"
+    + _OUTPUT_CONTRACT
 )
 
 # concrete example included in every paraphrase prompt so the LLM has an
 # unambiguous rendering target: the question always asks "which is correct?" and
 # each answer choice carries its verbatim modality tag in square brackets
+# Every clue_evidence / question_evidence / choice_evidence string appears verbatim inside
+# problem_text — that is the contract. Example 1 shows a "Given that" premise (non-null
+# question_evidence); the unique example shows the null case.
 _PARAPHRASE_EXAMPLE = (
     "Example of the expected output format:\n\n"
     "Input:\n"
@@ -983,17 +1011,30 @@ _PARAPHRASE_EXAMPLE = (
     "  Clues:\n"
     "    - Alice is before Bob\n"
     "    - Bob is immediately before Carol\n"
+    "  Given that: Alice is in slot 1\n"
     "  Question: Which of the following is correct?\n"
     "  Answer choices:\n"
-    "    A) [must be true] Alice is in slot 1\n"
-    "    B) [could be false] Bob is in slot 2\n"
-    "    C) [must be false] Carol is in slot 1\n\n"
+    "    A) [must be true] Bob is in slot 2\n"
+    "    B) [could be false] Carol is in slot 1\n\n"
     "Output:\n"
-    "  Alice, Bob, and Carol are standing in a line. Alice stands somewhere before Bob. "
-    "Bob is immediately in front of Carol. Which of the following is correct?\n"
-    "  A) [must be true] Alice is in the first position\n"
-    "  B) [could be false] Bob is in the second position\n"
-    "  C) [must be false] Carol is in the first position"
+    + json.dumps({
+        "clue_evidence": [
+            "Alice stands somewhere before Bob.",
+            "Bob is immediately in front of Carol.",
+        ],
+        "question_evidence": "Alice is in the first position",
+        "choice_evidence": {
+            "A": "Bob is in the second position",
+            "B": "Carol is in the first position",
+        },
+        "problem_text": (
+            "Alice, Bob, and Carol are standing in a line of three positions. "
+            "Alice stands somewhere before Bob. Bob is immediately in front of Carol. "
+            "Given that Alice is in the first position, which of the following is correct?\n"
+            "A) [must be true] Bob is in the second position\n"
+            "B) [could be false] Carol is in the first position"
+        ),
+    }, indent=2)
 )
 
 _PARAPHRASE_EXAMPLE_UNIQUE = (
@@ -1009,11 +1050,25 @@ _PARAPHRASE_EXAMPLE_UNIQUE = (
     "    A) [must be true] Bob is in slot 2\n"
     "    B) [must be false] Alice is in slot 3\n\n"
     "Output:\n"
-    "  Alice, Bob, and Carol are placed in three positions. Alice occupies the first position. "
-    "Bob stands immediately before Carol, who is in the third position. "
-    "Which of the following is correct?\n"
-    "  A) [must be true] Bob is in the second position\n"
-    "  B) [must be false] Alice is in the third position"
+    + json.dumps({
+        "clue_evidence": [
+            "Alice occupies the first position.",
+            "Bob stands immediately before Carol.",
+            "Carol is in the third position.",
+        ],
+        "question_evidence": None,
+        "choice_evidence": {
+            "A": "Bob is in the second position",
+            "B": "Alice is in the third position",
+        },
+        "problem_text": (
+            "Alice, Bob, and Carol are placed in three positions. "
+            "Alice occupies the first position. Bob stands immediately before Carol. "
+            "Carol is in the third position. Which of the following is correct?\n"
+            "A) [must be true] Bob is in the second position\n"
+            "B) [must be false] Alice is in the third position"
+        ),
+    }, indent=2)
 )
 
 
@@ -1102,12 +1157,18 @@ def _build_paraphrase_prompt(extracted, question_info: dict,
         f"{qc_str}"
         f"Question: {stem}\n"
         f"Answer choices:\n{choices_str}\n\n"
-        f"Output the complete natural-language puzzle as plain text only. "
-        f"Open with a sentence or two that states the domain axioms above. "
+        f"Output a single JSON object with keys \"clue_evidence\", \"question_evidence\", "
+        f"\"choice_evidence\", and \"problem_text\" as shown in the example. clue_evidence has "
+        f"exactly one sentence per clue listed above, in order. choice_evidence has one entry "
+        f"per answer-choice label. Every clue_evidence, question_evidence, and choice_evidence "
+        f"string must appear verbatim inside problem_text. "
+        f"Open problem_text with a sentence or two that states the domain axioms above. "
         f"Phrase any if-then clues as conditionals ('If A, then B'), never as causal statements. "
         f"If a 'Given that:' line is present above, it is a question-specific premise, NOT a "
-        f"general clue: introduce it in the question itself, starting with 'Given that ... "
-        f"{{question constraint}}', and do NOT list it among the clues."
+        f"general clue: introduce it in the question portion of problem_text, starting with "
+        f"'Given that ... {{question constraint}}', do NOT list it among the clues, do NOT add "
+        f"it to clue_evidence, and put its clause in question_evidence. If no 'Given that:' line "
+        f"is present, set question_evidence to null."
     )
 
 
@@ -1196,6 +1257,106 @@ def verify_paraphrase(text: str, extracted, question_info: dict,
     return True, ""
 
 
+def parse_paraphrase(raw: str):
+    """Parse the structured paraphrase output into
+    (clue_evidence, question_evidence, choice_evidence, problem_text).
+
+    The paraphrase LLM returns a JSON object with keys clue_evidence (list[str]),
+    question_evidence (str | null), choice_evidence (dict label->str), and problem_text (str).
+    Cloud backends may wrap it in ``` fences or add prose, so strip fences before json.loads
+    (same treatment as pipeline.extract_logic_problem). Returns None on any malformed output.
+    """
+    cleaned = re.sub(r"^```(json)?\s*|```$", "", raw.strip(), flags=re.M).strip()
+    try:
+        obj = json.loads(cleaned)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+
+    clue_evidence     = obj.get("clue_evidence")
+    question_evidence = obj.get("question_evidence")          # str or None
+    choice_evidence   = obj.get("choice_evidence") or {}      # dict label -> str
+    problem_text      = obj.get("problem_text")
+
+    if not isinstance(problem_text, str) or not isinstance(clue_evidence, list):
+        return None
+    if not all(isinstance(e, str) for e in clue_evidence):
+        return None
+    if question_evidence is not None and not isinstance(question_evidence, str):
+        return None
+    if not isinstance(choice_evidence, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in choice_evidence.items()):
+        return None
+
+    return clue_evidence, question_evidence, choice_evidence, problem_text.strip()
+
+
+def verify_evidence(extracted, clue_evidence: list, question_evidence,
+                    choice_evidence: dict, problem_text: str) -> tuple:
+    """Confirm every evidence string aligns with the extraction and is a verbatim substring
+    of problem_text — the same substring guarantee attribution.py's Option A relies on at
+    extraction time. Covers clues, the question premise, and each answer choice. Returns
+    (ok, failure_reason); failures trigger a Phase-7 retry."""
+    def substr_ok(label, ev):
+        if not ev or not ev.strip():
+            return False, f"{label} is empty"
+        if ev not in problem_text:
+            return False, f"{label} not a verbatim substring of problem_text: {ev!r}"
+        return True, ""
+
+    # Clues: one per top-level global constraint, in order.
+    if len(clue_evidence) != len(extracted.constraints):
+        return False, (f"expected {len(extracted.constraints)} clue_evidence entries, "
+                       f"got {len(clue_evidence)}")
+    for i, ev in enumerate(clue_evidence):
+        ok, reason = substr_ok(f"clue_evidence[{i}]", ev)
+        if not ok:
+            return False, reason
+
+    question = extracted.questions[0]
+
+    # Question premise: required iff the question has a question_constraint.
+    if question.question_constraints:
+        ok, reason = substr_ok("question_evidence", question_evidence)
+        if not ok:
+            return False, reason
+
+    # Answer choices: one entry per labelled choice that carries a constraint.
+    for ch in question.answer_choices:
+        if not ch.constraints:
+            continue
+        if ch.label not in choice_evidence:
+            return False, f"choice_evidence missing label {ch.label}"
+        ok, reason = substr_ok(f"choice_evidence[{ch.label}]", choice_evidence[ch.label])
+        if not ok:
+            return False, reason
+
+    return True, ""
+
+
+def inject_evidence(extracted, clue_evidence: list, question_evidence,
+                    choice_evidence: dict, active_domains: list):
+    """Return a copy of `extracted` with evidence_text written onto every constraint the
+    paraphrase rendered: the i-th top-level global constraint <- clue_evidence[i], the
+    question premise <- question_evidence, and each labelled answer choice <- choice_evidence.
+    The text is stored verbatim; attribution.py converts it to a [start, end] span later by
+    substring-matching against problem_text. Wrappers carry the whole clue's sentence; nested
+    children stay None."""
+    dump = extracted.model_dump()
+    for i, ev in enumerate(clue_evidence):
+        dump["constraints"][i]["evidence_text"] = ev
+
+    question = dump["questions"][0]
+    if question_evidence and question["question_constraints"]:
+        question["question_constraints"][0]["evidence_text"] = question_evidence
+    for ch in question["answer_choices"]:
+        if ch.get("constraints") and ch["label"] in choice_evidence:
+            ch["constraints"][0]["evidence_text"] = choice_evidence[ch["label"]]
+
+    return build_hybrid_schema(active_domains)(**dump)
+
+
 # ==============================================================================
 # PHASE 8 -- EMIT
 #
@@ -1204,6 +1365,13 @@ def verify_paraphrase(text: str, extracted, question_info: dict,
 # and sft_test.db is populated only later, by run.py, during model evaluation.
 # The answer is NOT stored: the training target is problem_text -> extracted_json,
 # and run.py re-derives ground truth by Z3-solving the gold extraction.
+#
+# TODO(evidence_text): rows emitted from now on carry evidence_text on every rendered
+# constraint -- each top-level global clue, the question premise, and each answer choice
+# (see inject_evidence). Existing sft_dataset.jsonl / sft_train.jsonl / sft_test.jsonl
+# predate this and have none, so the current FT model never emits it and attribution falls
+# back to BM25. Regenerate the dataset and retrain the extraction model to activate Option A
+# (LLM-supplied evidence_text) at extraction time.
 # ==============================================================================
 
 def log_and_emit(problem_text: str, extracted, question_info: dict,
@@ -1275,7 +1443,9 @@ def generate_one_puzzle():
         print(f"  [!] Pydantic validation failed: {e}")
         return None
 
-    # Phase 7 -- the only LLM call in the entire pipeline
+    # Phase 7 -- the only LLM call in the entire pipeline.
+    # Evidence-first: the LLM emits one sentence per clue (clue_evidence) plus a problem_text
+    # that contains each verbatim, so every clue is attributable to an exact source span.
     system_prompt = PARAPHRASE_SYSTEM_UNIQUE if unique_solution else PARAPHRASE_SYSTEM
     prompt        = _build_paraphrase_prompt(extracted, question_info,
                                              active_domains=active_domains,
@@ -1287,9 +1457,27 @@ def generate_one_puzzle():
         except Exception as e:
             print(f"  [!] Paraphrase call failed: {e}")
             break
-        ok, reason = verify_paraphrase(raw, extracted, question_info, active_domains)
+
+        parsed = parse_paraphrase(raw)
+        if parsed is None:
+            print(f"  [Paraphrase parse failed "
+                  f"({attempt + 1}/{MAX_PARAPHRASE_RETRIES}): not valid JSON with "
+                  f"clue_evidence/question_evidence/choice_evidence/problem_text]")
+            continue
+        clue_evidence, question_evidence, choice_evidence, candidate_text = parsed
+
+        ok, reason = verify_evidence(extracted, clue_evidence, question_evidence,
+                                     choice_evidence, candidate_text)
+        if not ok:
+            print(f"  [Evidence check failed "
+                  f"({attempt + 1}/{MAX_PARAPHRASE_RETRIES}): {reason}]")
+            continue
+
+        ok, reason = verify_paraphrase(candidate_text, extracted, question_info, active_domains)
         if ok:
-            problem_text = raw.strip()
+            extracted    = inject_evidence(extracted, clue_evidence, question_evidence,
+                                           choice_evidence, active_domains)
+            problem_text = candidate_text
             break
         print(f"  [Paraphrase assertion failed "
               f"({attempt + 1}/{MAX_PARAPHRASE_RETRIES}): {reason}]")
