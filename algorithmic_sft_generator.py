@@ -77,8 +77,8 @@ MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_dataset.jsonl"  # the full dataset; split later by split_dataset.py
 
-PARAPHRASE_BACKEND   = "ollama"            # "gemini" | "ollama"
-PARAPHRASE_MODEL     = "gpt-oss:20b-cloud"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
+PARAPHRASE_BACKEND   = "gemini"            # "gemini" | "ollama"
+PARAPHRASE_MODEL     = "gemini-3.1-flash-lite"  # for ollama backend use: "gpt-oss:120b-cloud" or "gpt-oss:20b-cloud"
                                                 # for gemini use "gemini-3.1-flash-lite"
 
 KK_SPEECH_ACT_MAX    = 2     # max speech act PAIRS added post-pruning (= 4 constraints total)
@@ -1357,6 +1357,37 @@ def inject_evidence(extracted, clue_evidence: list, question_evidence,
     return build_hybrid_schema(active_domains)(**dump)
 
 
+def _strip_nested_evidence(constraint: dict) -> None:
+    """Drop evidence_text from every constraint nested inside `constraint` (the children of
+    composite wrappers). The top-level object keeps its evidence_text -- a wrapper already
+    captures the whole clue's sentence, so child evidence_text=None just wastes tokens in the
+    gold JSON. Mutates in place, recursively."""
+    for key in ("antecedent", "consequent", "claim"):
+        child = constraint.get(key)
+        if isinstance(child, dict):
+            child.pop("evidence_text", None)
+            _strip_nested_evidence(child)
+    for child in constraint.get("claims") or []:
+        if isinstance(child, dict):
+            child.pop("evidence_text", None)
+            _strip_nested_evidence(child)
+
+
+def dump_for_emit(extracted) -> dict:
+    """LogicProblem.model_dump() with evidence_text stripped from all nested child claims,
+    keeping it only on the top-level constraints (global clues, question premise, answer
+    choices) where attribution reads it."""
+    dump = extracted.model_dump()
+    top_level = list(dump.get("constraints", []) or [])
+    for q in dump.get("questions", []) or []:
+        top_level += q.get("question_constraints", []) or []
+        for ch in q.get("answer_choices", []) or []:
+            top_level += ch.get("constraints", []) or []
+    for c in top_level:
+        _strip_nested_evidence(c)
+    return dump
+
+
 # ==============================================================================
 # PHASE 8 -- EMIT
 #
@@ -1382,7 +1413,7 @@ def log_and_emit(problem_text: str, extracted, question_info: dict,
         "run_id":         run_id,
         "problem_text":   problem_text,
         "active_domains": json.dumps(active_domains),
-        "extracted_json": json.dumps(extracted.model_dump()),
+        "extracted_json": json.dumps(dump_for_emit(extracted)),
         "model_name":     f"algorithmic_{PARAPHRASE_MODEL}",
         "timestamp":      datetime.now(timezone.utc).isoformat(),
     }
