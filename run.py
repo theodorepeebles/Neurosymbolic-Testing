@@ -24,6 +24,7 @@ from pipeline import (
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
 import eval_metrics
+import attribution
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
@@ -178,6 +179,14 @@ for i, row in enumerate(test_rows, 1):
             gold, extracted_dict, active_domains, problem
         )
 
+        # Attribute each extracted constraint to a span of the problem text.
+        # Option A (LLM evidence_text) when present, else entity-filtered BM25 fallback.
+        attribution_methods = attribution_spans = None
+        if extracted_dict is not None:
+            attribution_methods, attribution_spans = attribution.build_attribution(
+                extracted_dict, problem
+            )
+
         db_row = {
             "run_id":                run_id,
             "attempt_number":        1,
@@ -202,6 +211,8 @@ for i, row in enumerate(test_rows, 1):
             "error_traceback":       error_tb,
             "completion_token_count": None,
             "generation_time_ms":    gen_ms,
+            "attribution_methods":   attribution_methods,
+            "attribution_spans":     attribution_spans,
         }
         if LOG_TO_DB:
             log_attempt(db_row)

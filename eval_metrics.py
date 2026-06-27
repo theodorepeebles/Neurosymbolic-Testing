@@ -30,9 +30,27 @@ COUNTED_CONSTRAINT_TYPES = (
 )
 
 
+def _strip_evidence(constraint):
+    """Return a deep copy of a constraint dict with every `evidence_text` removed,
+    recursing into logical wrappers. Attribution adds evidence_text to extracted (and,
+    eventually, gold) constraints; it's source-sentence provenance, not semantics, so it
+    must NOT affect exact_*_match comparisons (two equal constraints can cite different
+    sentences, and old gold rows carry none)."""
+    if not isinstance(constraint, dict):
+        return constraint
+    out = {k: v for k, v in constraint.items() if k != "evidence_text"}
+    for key in ("antecedent", "consequent", "claim"):
+        if isinstance(out.get(key), dict):
+            out[key] = _strip_evidence(out[key])
+    if isinstance(out.get("claims"), list):
+        out["claims"] = [_strip_evidence(c) for c in out["claims"]]
+    return out
+
+
 def get_canonical_set(constraint_list) -> set:
-    """Freeze a list of constraint dicts into an order-/key-agnostic set of strings."""
-    return set(json.dumps(c, sort_keys=True) for c in (constraint_list or []))
+    """Freeze a list of constraint dicts into an order-/key-agnostic set of strings.
+    evidence_text is stripped first so provenance never affects exact-match equality."""
+    return set(json.dumps(_strip_evidence(c), sort_keys=True) for c in (constraint_list or []))
 
 
 def _count_wrappers(constraint) -> int:

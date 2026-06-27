@@ -138,7 +138,17 @@ CREATE TABLE IF NOT EXISTS extraction_attempts (
     -- [PERFORMANCE TRACKING]
     -- ==========================================
     completion_token_count                INTEGER,
-    generation_time_ms                    INTEGER
+    generation_time_ms                    INTEGER,
+
+    -- ==========================================
+    -- [CONSTRAINT -> SOURCE-TEXT ATTRIBUTION]
+    -- Maps each extracted constraint to where in problem_text it came from.
+    -- Keys are namespaced constraint ids (c_0 = track_c_0, q0.qc_0, q0.A_0; see
+    -- attribution.py). methods: cid -> 'option_a'|'bm25_fallback'|'unattributed'.
+    -- spans:   cid -> [char_start, char_end] into problem_text (only when located).
+    -- ==========================================
+    attribution_methods                   TEXT,             -- JSON dict cid -> attribution method
+    attribution_spans                     TEXT              -- JSON dict cid -> [start, end]
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_id   ON extraction_attempts(run_id);
@@ -180,6 +190,7 @@ COLUMNS = [
     "expected_json", "extracted_json", "schema_valid", "constraint_type_counts",
     "z3_result", "answer_correct", "ground_truth_answer", "error_traceback",
     "completion_token_count", "generation_time_ms",
+    "attribution_methods", "attribution_spans",
 ]
 
 # Columns declared NOT NULL in the DDL — must be present (non-None) in every row.
@@ -189,7 +200,8 @@ _REQUIRED = {
 }
 
 # Columns stored as JSON text; dicts/lists are json.dumps'd on the way in.
-_JSON_COLUMNS = {"active_domains", "constraint_type_counts", "expected_json"}
+_JSON_COLUMNS = {"active_domains", "constraint_type_counts", "expected_json",
+                 "attribution_methods", "attribution_spans"}
 
 # Columns that hold booleans in Python but INTEGER 0/1 in SQLite.
 _BOOL_COLUMNS = {"exact_entity_match", "exact_global_constraint_match",
@@ -204,6 +216,7 @@ _NON_INTEGER_TYPES = {
     "text_lexical_density": "REAL", "expected_json": "TEXT", "extracted_json": "TEXT",
     "constraint_type_counts": "TEXT", "z3_result": "TEXT",
     "ground_truth_answer": "TEXT", "error_traceback": "TEXT",
+    "attribution_methods": "TEXT", "attribution_spans": "TEXT",
 }
 
 
