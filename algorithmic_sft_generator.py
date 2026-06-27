@@ -335,11 +335,14 @@ def _gen_grouping_primitives(entity_names: list, truth: dict, num_groups: int) -
             else:
                 false_p.append({"type": "is_in", "entity": e, "group": g})
 
-    # exactly_n (full: all entities) -- canonical version, one per group
+    # exactly_n (full: all entities) -- canonical version, one per group.
+    # Guard len > 1: a single-entity exactly_n collapses into is_in in natural
+    # language ("exactly 1 of [X]" == "X is in ..."), so never emit one.
     all_ents = list(entity_names)
-    for g in range(1, num_groups + 1):
-        n_in_g = sum(1 for e in entity_names if groups[e] == g)
-        true_p.append({"type": "exactly_n", "entities": all_ents, "n": n_in_g, "group": g})
+    if len(all_ents) > 1:
+        for g in range(1, num_groups + 1):
+            n_in_g = sum(1 for e in entity_names if groups[e] == g)
+            true_p.append({"type": "exactly_n", "entities": all_ents, "n": n_in_g, "group": g})
 
     # exactly_n (subsets of size 3-4, non-trivial: 0 < count_in_G < |subset|)
     # larger subsets add marginal information and flood the pool
@@ -974,6 +977,23 @@ _OUTPUT_CONTRACT = (
     "them into one sentence. Write each clue as its own sentence."
 )
 
+# Domain-language discipline: keep grouping and ordering vocabulary distinct, and keep
+# counting clues (exactly_n) distinct from plain membership clues (is_in) so they never
+# collapse into the same wording. Appended to both paraphrase system prompts.
+_DOMAIN_LANGUAGE_RULES = (
+    "Domain language rules:\n"
+    "- GROUPING clues describe MEMBERSHIP. Use group/team/category language only "
+    "('is in group N', 'are in the same group', 'are in different groups'). "
+    "Never describe a group with order or position words.\n"
+    "- ORDERING clues describe ORDER. Use position/slot/order language only "
+    "('is in position N', 'is before', 'is immediately before', 'are adjacent'). "
+    "Never describe a position as a 'group'.\n"
+    "- COUNTING vs MEMBERSHIP: reserve the word 'exactly' for counting clues of the form "
+    "'exactly N of [...] are in group M'. A plain membership clue ('X is in group M') must "
+    "NEVER use 'exactly' or any counting / number-of phrasing. Conversely, a counting clue "
+    "must always state its count explicitly with 'exactly N'."
+)
+
 PARAPHRASE_SYSTEM = (
     "You render structured logic puzzles as natural language. "
     "Write exactly the puzzle described -- no extra clues, no omissions. "
@@ -983,6 +1003,7 @@ PARAPHRASE_SYSTEM = (
     "Never use causal or consequentialist phrasing such as 'Because A is true, B follows' "
     "or 'Since A, B must be the case' -- that incorrectly implies the antecedent is an "
     "established fact rather than a hypothetical condition.\n\n"
+    + _DOMAIN_LANGUAGE_RULES + "\n\n"
     + _OUTPUT_CONTRACT
 )
 
@@ -995,6 +1016,7 @@ PARAPHRASE_SYSTEM_UNIQUE = (
     "If-then constraints are CONDITIONAL statements -- always phrase them as "
     "'If [antecedent], then [consequent]'. Never use causal phrasing that implies "
     "the antecedent is an established fact.\n\n"
+    + _DOMAIN_LANGUAGE_RULES + "\n\n"
     + _OUTPUT_CONTRACT
 )
 
