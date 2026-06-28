@@ -44,6 +44,7 @@ from z3 import (
 
 from validators import build_hybrid_schema, DOMAIN_LP_FIELDS
 from pipeline import encode, ask_llm
+import eval_metrics
 
 try:
     from google import genai
@@ -72,7 +73,7 @@ ANSWER_CHOICES_MAX       = 4
 QUESTION_TYPES           = ["must_be_true", "must_be_false", "could_be_true", "could_be_false"]
 QUESTION_CONSTRAINTS_MIN = 0     # 0 -> bare "which must be true?"; 1 -> "given that X, ..."
 QUESTION_CONSTRAINTS_MAX = 1
-MAX_PARAPHRASE_RETRIES   = 3
+MAX_PARAPHRASE_RETRIES   = 1
 MAX_QUESTION_RETRIES     = 10
 
 SFT_OUT              = "../data/sft_dataset.jsonl"  # the full dataset; split later by split_dataset.py
@@ -1379,35 +1380,12 @@ def inject_evidence(extracted, clue_evidence: list, question_evidence,
     return build_hybrid_schema(active_domains)(**dump)
 
 
-def _strip_nested_evidence(constraint: dict) -> None:
-    """Drop evidence_text from every constraint nested inside `constraint` (the children of
-    composite wrappers). The top-level object keeps its evidence_text -- a wrapper already
-    captures the whole clue's sentence, so child evidence_text=None just wastes tokens in the
-    gold JSON. Mutates in place, recursively."""
-    for key in ("antecedent", "consequent", "claim"):
-        child = constraint.get(key)
-        if isinstance(child, dict):
-            child.pop("evidence_text", None)
-            _strip_nested_evidence(child)
-    for child in constraint.get("claims") or []:
-        if isinstance(child, dict):
-            child.pop("evidence_text", None)
-            _strip_nested_evidence(child)
-
-
 def dump_for_emit(extracted) -> dict:
     """LogicProblem.model_dump() with evidence_text stripped from all nested child claims,
     keeping it only on the top-level constraints (global clues, question premise, answer
-    choices) where attribution reads it."""
-    dump = extracted.model_dump()
-    top_level = list(dump.get("constraints", []) or [])
-    for q in dump.get("questions", []) or []:
-        top_level += q.get("question_constraints", []) or []
-        for ch in q.get("answer_choices", []) or []:
-            top_level += ch.get("constraints", []) or []
-    for c in top_level:
-        _strip_nested_evidence(c)
-    return dump
+    choices) where attribution reads it. Shares one implementation with run.py's extraction
+    serialization (eval_metrics.strip_problem_nested_evidence)."""
+    return eval_metrics.strip_problem_nested_evidence(extracted.model_dump())
 
 
 # ==============================================================================

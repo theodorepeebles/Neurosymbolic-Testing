@@ -70,8 +70,9 @@
   #meta{padding:16px 16px 28px}
 
   /* ---- sidebar: report tabs ---- */
-  #reps{display:flex;flex-direction:column;border-bottom:1px solid var(--border)}
-  .rep{display:flex;flex-direction:column;gap:1px;padding:7px 14px;border:none;border-radius:0;
+  #reps{display:flex;flex-direction:column;border-bottom:1px solid var(--border);
+    flex-shrink:0;max-height:16vh;overflow-y:auto}
+  .rep{display:flex;flex-direction:column;gap:0;padding:4px 14px;border:none;border-radius:0;
     background:transparent;text-align:left;border-left:3px solid transparent}
   .rep:hover{background:var(--panel2)}
   .rep.active{background:var(--panel2);border-left-color:var(--accent)}
@@ -80,8 +81,8 @@
   .rep .r2{font-size:11px;color:var(--muted)}
 
   /* ---- sidebar: summary stats ---- */
-  #summary{padding:10px 14px;border-bottom:1px solid var(--border);
-    display:flex;flex-direction:column;gap:8px}
+  #summary{padding:8px 14px;border-bottom:1px solid var(--border);
+    display:flex;flex-direction:column;gap:6px}
   #summary .flbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
   .sumgroup{display:flex;flex-direction:column;gap:2px}
   .sumrow{display:flex;align-items:center;gap:8px;font-size:12px;padding:1px 0}
@@ -96,8 +97,8 @@
   .sumrow.mism .n.hot{color:var(--fail)}
 
   /* ---- sidebar: filters ---- */
-  #filters{padding:10px 14px;border-bottom:1px solid var(--border);
-    display:flex;flex-direction:column;gap:9px}
+  #filters{padding:8px 14px;border-bottom:1px solid var(--border);
+    display:flex;flex-direction:column;gap:7px}
   .frow{display:flex;flex-direction:column;gap:5px}
   .flbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
   .chips{display:flex;flex-wrap:wrap;gap:5px}
@@ -414,8 +415,10 @@ function renderReps(){
   });
   if (reports.length){
     const b = el("button","rep db"+(activeKey===DB_KEY?" active":""));
+    const dbFilter = reports[0].db_model_filter;
     b.appendChild(el("span","r1","Whole DB"));
-    b.appendChild(el("span","r2", `${reports[0].rows.length} rows · all models`));
+    b.appendChild(el("span","r2",
+      `${reports[0].rows.length} rows · ${dbFilter && dbFilter.length ? dbFilter.join(", ") : "all models"}`));
     b.onclick = ()=>{ activeKey=DB_KEY; render(); };
     box.appendChild(b);
   }
@@ -878,8 +881,11 @@ function render(){
   const st = stateFor(activeKey);
   // header context line
   const sh = document.getElementById("subhead");
-  if (activeKey===DB_KEY)
-    sh.textContent = `Whole DB snapshot · ${rep.rows.length} rows · taken ${fmtDate(rep.generated_at)} · ${rep.db_path||""}`;
+  if (activeKey===DB_KEY){
+    const dbFilter = rep.db_model_filter;
+    const scope = dbFilter && dbFilter.length ? `model: ${dbFilter.join(", ")}` : "all models";
+    sh.textContent = `Whole DB snapshot · ${rep.rows.length} rows · ${scope} · taken ${fmtDate(rep.generated_at)} · ${rep.db_path||""}`;
+  }
   else
     sh.textContent = `${rep.filename} · generated ${fmtDate(rep.generated_at)} · model: ${(rep.model_names||["all models"]).join(", ")}`;
 

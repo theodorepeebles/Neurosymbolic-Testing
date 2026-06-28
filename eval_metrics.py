@@ -53,6 +53,34 @@ def get_canonical_set(constraint_list) -> set:
     return set(json.dumps(_strip_evidence(c), sort_keys=True) for c in (constraint_list or []))
 
 
+def strip_nested_evidence(constraint: dict) -> None:
+    """Drop evidence_text from constraints nested inside `constraint` (children of composite
+    wrappers: if_then antecedent/consequent, not claim, and/or claims); the top-level object
+    keeps its own. A wrapper already captures the whole clue's sentence, so child
+    evidence_text=None just wastes tokens / makes noisy diffs. Mutates in place, recursively."""
+    for key in ("antecedent", "consequent", "claim"):
+        child = constraint.get(key)
+        if isinstance(child, dict):
+            child.pop("evidence_text", None)
+            strip_nested_evidence(child)
+    for child in constraint.get("claims") or []:
+        if isinstance(child, dict):
+            child.pop("evidence_text", None)
+            strip_nested_evidence(child)
+
+
+def strip_problem_nested_evidence(problem: dict) -> dict:
+    """Strip nested evidence_text across a whole LogicProblem dict: every top-level constraint
+    (global + question + choice) keeps its evidence_text; their descendants lose it. Mutates and
+    returns `problem`. Used by both the generator (dump_for_emit) and run.py so stored gold and
+    stored extractions serialize evidence the same way."""
+    for c in (_global_constraints(problem)
+              + _question_constraints(problem)
+              + _choice_constraints(problem)):
+        strip_nested_evidence(c)
+    return problem
+
+
 def _count_wrappers(constraint) -> int:
     """Recursively count logical-wrapper constraints within one constraint dict."""
     if not isinstance(constraint, dict):

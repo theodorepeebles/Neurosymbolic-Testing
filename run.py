@@ -43,18 +43,12 @@ MODEL_SETS = [
     #     "extraction_llm": "qwen3:0.6b",
     #     "formatting_llm": "qwen3:8b",
     # },
-     {
-        "name": "SFT_Extraction_Qwen3_0.6b",
+      {
+        "name": "SFT_Extraction_Qwen3_0.6b-v4",
         "classifier_llm": "qwen3:8b",
-        "extraction_llm": "SFT_Extraction_Qwen3_0.6b",
+        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v4",
         "formatting_llm": "qwen3:8b",
     },
-    #  {
-    #     "name": "SFT_Extraction_Qwen3_0.6b-v2",
-    #     "classifier_llm": "qwen3:8b",
-    #     "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v2",
-    #     "formatting_llm": "qwen3:8b",
-    # },
 ]
 
 # Models that use extract_finetuned (minimal FT_EXTRACTION_SYSTEM prompt).
@@ -171,7 +165,11 @@ for i, row in enumerate(test_rows, 1):
 
         extracted_obj  = ns.get("extracted")
         extracted_dict = extracted_obj.model_dump() if extracted_obj else None
-        extracted_json = extracted_obj.model_dump_json() if extracted_obj else None
+        # Store with nested evidence_text stripped (kept only on top-level constraints), matching
+        # how gold is serialized — model_dump_json would otherwise emit "evidence_text": null on
+        # every nested wrapper child. extracted_dict (above) stays unstripped for metrics/attribution.
+        extracted_json = (json.dumps(eval_metrics.strip_problem_nested_evidence(extracted_obj.model_dump()))
+                          if extracted_obj else None)
         counts         = constraint_type_counts(extracted_obj) if extracted_obj else None
         z3_status      = ns.get("z3_status")
 
