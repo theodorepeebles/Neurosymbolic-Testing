@@ -13,7 +13,7 @@ from sklearn.tree import DecisionTreeClassifier, _tree
 #   None         -> all models (pooled together)
 #   ["a"]        -> just model "a"
 #   ["a", "b"]   -> models "a" and "b" pooled together
-MODEL_NAMES = ["SFT_Extraction_Qwen3_0.6b-v2"]
+MODEL_NAMES = ["SFT_Extraction_Qwen3_0.6b-v4"]
 
 # Numeric feature columns fed to the decision tree (domain dummies are added separately).
 # This is the exact set the tree has always used; it is listed explicitly because the
@@ -176,8 +176,16 @@ def analyze_and_export_failure_targets(db_path: str, model_names=None):
         params = list(model_names)
     # Model-filtered rows drive the tree/profiles. SELECT * so we keep id/run_id/json/etc.
     df = pd.read_sql_query(f"SELECT * FROM extraction_attempts WHERE {where}", conn, params=params)
-    # Whole-DB snapshot (every row, all models) powers the viewer's "Whole DB" tab + row lookups.
-    db_df = pd.read_sql_query("SELECT * FROM extraction_attempts", conn)
+    # Whole-DB snapshot powers the viewer's "Whole DB" tab + row lookups. Scope it to the
+    # same model(s) as the profiles (but without the environment restriction, so it captures
+    # all of that model's rows — just without the profile analysis). None → every row, all models.
+    if model_names:
+        db_placeholders = ", ".join("?" for _ in model_names)
+        db_df = pd.read_sql_query(
+            f"SELECT * FROM extraction_attempts WHERE extraction_model_name IN ({db_placeholders})",
+            conn, params=list(model_names))
+    else:
+        db_df = pd.read_sql_query("SELECT * FROM extraction_attempts", conn)
     conn.close()
 
     records = _records_from_df(db_df)

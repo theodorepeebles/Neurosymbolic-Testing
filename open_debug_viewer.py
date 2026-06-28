@@ -25,6 +25,12 @@ TEMPLATE = os.path.join(HERE, "debug_viewer.template.html")
 PLACEHOLDER = "__EMBEDDED_REPORTS__"
 OUTPUT = os.path.join(REPORTS_DIR, "debug_viewer.html")
 
+# Restrict the viewer's "Whole DB" tab to specific extraction_model_name(s),
+# mirroring analyze.py's MODEL_NAMES. The whole-DB snapshot embedded in each report
+# normally contains every row across all models; set this to isolate the tab to one
+# model (e.g. v4 of the extraction model). None / empty list = show every model.
+DB_MODEL_NAMES = ["SFT_Extraction_Qwen3_0.6b-v4"]
+
 
 def _escape_for_script(text: str) -> str:
     """Make a JSON string safe to embed inside a <script type="application/json"> block.
@@ -38,6 +44,25 @@ def _escape_for_script(text: str) -> str:
                 .replace(">", "\\u003e")
                 .replace(chr(0x2028), "\\u2028")
                 .replace(chr(0x2029), "\\u2029"))
+
+
+def _filter_db_rows(obj):
+    """Restrict a report's whole-DB rows to DB_MODEL_NAMES (the "Whole DB" tab).
+
+    Profiles in each report are already model-scoped by analyze.py, so they keep
+    referencing their own rows; this only narrows the all-models snapshot. No-op when
+    DB_MODEL_NAMES is empty/None. Records the applied filter on the report so the viewer
+    can label the tab accurately instead of saying "all models".
+    """
+    if not DB_MODEL_NAMES:
+        return
+    rows = obj.get("rows")
+    if not isinstance(rows, list):
+        return
+    allowed = set(DB_MODEL_NAMES)
+    obj["rows"] = [r for r in rows
+                   if isinstance(r, dict) and r.get("extraction_model_name") in allowed]
+    obj["db_model_filter"] = list(DB_MODEL_NAMES)
 
 
 def load_reports():
@@ -54,6 +79,7 @@ def load_reports():
             print(f"  ! skipping {os.path.basename(path)}: not an ns_failure_report")
             continue
         obj["filename"] = os.path.basename(path)
+        _filter_db_rows(obj)
         out.append(obj)
     out.sort(key=lambda r: (str(r.get("generated_at") or ""), r["filename"]), reverse=True)
     return out
@@ -81,6 +107,9 @@ def main():
         f.write(html)
 
     print(f"Embedded {len(reports)} report(s); newest: {reports[0]['filename']}")
+    if DB_MODEL_NAMES:
+        print(f"Whole-DB tab restricted to model(s): {', '.join(DB_MODEL_NAMES)} "
+              f"({len(reports[0]['rows'])} rows)")
     print(f"Wrote {OUTPUT}")
     webbrowser.open(Path(OUTPUT).resolve().as_uri())
 
