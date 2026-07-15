@@ -505,6 +505,94 @@ def build_counterexample_model(asserted, named, zvars) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# REPL / single-binding query entry points
+#
+# These answer interactive "var = value" questions ("Why can't X=V?", "Can X=V?", "What forces X?")
+# by reusing the exact Stage-1 primitives above, and return the SAME WrongAnswerExplanation /
+# CorrectAnswerExplanation objects the verbalization adapters already consume — so the REPL needs no
+# separate prose path. question_type is the sentinel "query" (not a multiple-choice modality).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def prepare_query_context(extracted, problem_text):
+    """Build (ctx, span_index) for one puzzle — the same setup explain_problem does internally,
+    factored out so repl.py can reuse it. Spans come from attribution so cids line up with labels."""
+    _methods, spans = build_attribution(extracted.model_dump(), problem_text)
+    span_index = {cid: tuple(v) for cid, v in spans.items()}
+    ctx = build_context(extracted)
+    return ctx, span_index
+
+
+def _binding_hypothesis(ctx: SolverContext, var: str, val):
+    """Z3 literal asserting var == val (bool or int), mirroring _neq_lit."""
+    lit = BoolVal(val) if isinstance(val, bool) else IntVal(val)
+    return ctx.zvars[var] == lit
+
+
+def _refute_binding(ctx, q_index, span_index, var, val) -> WrongAnswerExplanation:
+    """Core of the REPL var=value query. If asserting var==val is UNSAT against the puzzle, return
+    a MUS_REFUTATION (why it's impossible); if SAT, return a COUNTEREXAMPLE witness (it's possible,
+    here is an arrangement). Reuses the same algorithms as explain_question's wrong-answer branch."""
+    named = ctx.base_named + ctx.question_named.get(q_index, [])
+    all_cids = [cid for cid, _ in named]
+    text_positions = {cid: _text_pos(span_index, cid) for cid in all_cids}
+
+    H = _binding_hypothesis(ctx, var, val)
+    prop = f"{var} = {val}"
+    status = _check(named, H)
+
+    if status == unsat:
+        single_refs = find_all_single_refutations(named, H, span_index, ctx.cid_vars)
+        muses, msses = marco_enumerate(named, H)
+        all_mus = rank_muses(_dedup(muses), span_index, text_positions)
+        chain = (build_narrative_chain(all_mus[0], {var}, ctx.cid_vars, span_index, text_positions)
+                 if all_mus else [])
+        return WrongAnswerExplanation(
+            answer=var, query_type="MUS_REFUTATION", question_type="query",
+            hypothesis_type="binding", proposition_text=prop,
+            single_refutations=single_refs, all_mus=all_mus, narrative_chain=chain,
+            mcs=compute_mcs(all_cids, msses), mss=max(msses, key=len) if msses else [],
+            tier=compute_tier("MUS_REFUTATION", single_refs, all_mus, span_index),
+            counterexample_model=None,
+        )
+
+    return WrongAnswerExplanation(
+        answer=var, query_type="COUNTEREXAMPLE", question_type="query",
+        hypothesis_type="binding", proposition_text=prop,
+        single_refutations=[], all_mus=[], narrative_chain=[], mcs=[], mss=[],
+        tier=compute_tier("COUNTEREXAMPLE", [], [], span_index),
+        counterexample_model=build_counterexample_model(H, named, ctx.zvars),
+    )
+
+
+def query_why_not(ctx, q_index, span_index, var, val) -> WrongAnswerExplanation:
+    """'Why can't X = V?' — expects UNSAT and returns the MUS refutation; if it's actually possible,
+    returns a COUNTEREXAMPLE witness instead (informing the user that the binding can hold)."""
+    return _refute_binding(ctx, q_index, span_index, var, val)
+
+
+def query_can(ctx, q_index, span_index, var, val) -> WrongAnswerExplanation:
+    """'Can X = V?' — SAT returns a COUNTEREXAMPLE witness (yes, here is an arrangement); UNSAT
+    returns the MUS refutation (no, and here is why). Same machinery as query_why_not."""
+    return _refute_binding(ctx, q_index, span_index, var, val)
+
+
+def query_what_forces(ctx, q_index, span_index, var) -> Optional[CorrectAnswerExplanation]:
+    """'What forces X?' — classify var via annotate_puzzle_solution. Returns a CorrectAnswerExplanation
+    carrying just that variable's forced binding (with its minimal forcing clue set) or its free
+    binding. Returns None if the puzzle is UNSAT or var is not in the solution."""
+    forced, free, _order = annotate_puzzle_solution(ctx, q_index, span_index)
+    for v, val, cids in forced:
+        if v == var:
+            return CorrectAnswerExplanation(answer=var, forced_bindings=[(var, val, cids)],
+                                            free_bindings=[], narrative_order=list(cids))
+    for v, val in free:
+        if v == var:
+            return CorrectAnswerExplanation(answer=var, forced_bindings=[],
+                                            free_bindings=[(var, val)], narrative_order=[])
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Top level
 # ─────────────────────────────────────────────────────────────────────────────
 

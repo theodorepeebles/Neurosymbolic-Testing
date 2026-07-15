@@ -652,7 +652,8 @@ def _handle_unsat_retry(
 
 def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None = None,
                     classifier_model: str = "qwen3:8b",
-                    formatter_model: str = "qwen3:8b") -> dict:
+                    formatter_model: str = "qwen3:8b",
+                    verbalize: bool = False) -> dict:
     result = {
         "extracted":        None,
         "extraction_raw":   None,
@@ -728,30 +729,22 @@ def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None =
             result["formatted_output"] = f"ERROR: Z3 returned {z3_result['status']}"
             return result
 
-        # STEP 4 — format
-        # LLM explains the answer given Z3's verified result
-        # placeholder for richer explanation — currently just states the correct label
-        # ============================================================================
-        # TEMPORARY: LLM formatting step is commented out to avoid wasting time on it.
-        # RE-ENABLE THIS BLOCK WHEN DONE TESTING. The lines below just stub out the
-        # formatted_output instead of making a real LLM call.
-        # ============================================================================
-        # print(f"  Waiting for LLM formatting...")
-        # t_fmt_start = time.time()
-        # formatted = ask_llm(
-        #     prompt=(
-        #     f"Answer this logic puzzle in one sentence. State only the correct answer label and what it means, no working or reasoning. The answer is {z3_result.get('question_results')}.\nLogic puzzle: {problem}"
-        #     ),
-        #     system="You answer logic puzzles in one sentence. State only the correct answer label and what it means.",
-        #     model=formatter_model,
-        # )
-        # t_fmt_end = time.time()
-        # print(f"  Got formatting response ({t_fmt_end - t_fmt_start:.2f}s)")
-        #
-        # result["llm_calls"]        += 1
-        # result["formatted_output"]  = formatted
-        formatted = None  # TEMPORARY: formatting disabled (see note above)
-        result["formatted_output"] = formatted
+        # STEP 4 — format (verbalization)
+        # Deterministic, template-only prose for the verified Z3 result via the symbolic
+        # explanation engine — no LLM. Gated behind `verbalize` (default off) so generation
+        # callers (e.g. ollama_auto_sft) don't pay the MARCO enumeration cost. Imports are
+        # local to avoid the explanation -> pipeline -> verbalization import cycle.
+        if verbalize:
+            try:
+                from explanation import explain_problem, build_context
+                import verbalization
+                structs = explain_problem(extracted, problem)
+                labels = build_context(extracted).cid_label
+                result["formatted_output"] = verbalization.verbalize_struct(structs, labels)
+            except Exception as e:
+                result["formatted_output"] = f"ERROR: verbalization failed: {type(e).__name__}: {e}"
+        else:
+            result["formatted_output"] = None
 
     except RuntimeError as e:
         print(f"  [!] NS Pipeline failed due to timeout/connection error: {e}")

@@ -147,6 +147,7 @@ for i, row in enumerate(test_rows, 1):
                 active_domains=active_domains,
                 classifier_model=ms["classifier_llm"],
                 formatter_model=ms["formatting_llm"],
+                verbalize=True,
             )
         except Exception:
             error_tb = traceback.format_exc()
@@ -223,6 +224,9 @@ for i, row in enumerate(test_rows, 1):
         }
         print(f"  Z3: {z3_status} \n correct: {ns_correct}  "
               f"exact_global_match: {metrics['exact_global_constraint_match']} \n  ({gen_ms} ms)")
+        if ns.get("formatted_output"):
+            print("  --- Explanation ---")
+            print(ns["formatted_output"])
 
     results.append(record)
 
