@@ -7,7 +7,7 @@ from collections import Counter
 from validators import DOMAIN_CONSTRAINT_CLASSES, build_hybrid_schema
 
 
-def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150, is_extraction: bool = False, debug_render_only: bool = False) -> str:
+def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150, is_extraction: bool = False) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     Returns:
@@ -21,6 +21,7 @@ def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen
         "think": think,
     }
     # not sure how redundant this body options stuff is - need to do direct comparison testing with and without it on a large dataset - on 30 examples it performed exactly the same
+    # definitely redundant for my fine tuned models but not redundant for testing on regular qwen or other non fine tuned models
     if is_extraction:
         body["options"] = {
             "temperature": 0,
