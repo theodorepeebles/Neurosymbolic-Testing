@@ -197,7 +197,6 @@ def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[s
     model and think params allow ablation testing against different configurations.
     """
     try:
-        # CHANGED: system prompt reference updated
         raw = ask_llm(prompt=problem, system=BASELINE_LOGIC_SYSTEM, model=model, think=think)
     except RuntimeError as e:
         return None, f"TIMEOUT_OR_CONNECTION_ERROR: {e}", ""
@@ -205,14 +204,11 @@ def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[s
     cleaned = raw.strip()
 
     # Look for the marker first
-    # CHANGED: pattern looks for a label (one or more word chars) instead of a number
     match = re.search(r"ANSWER:\s*([A-D])\b", cleaned, re.IGNORECASE)
     if match:
-        # CHANGED: return uppercased label string, not float
         return match.group(1).upper(), None, raw
 
     # Fallback: last standalone uppercase letter in the response
-    # CHANGED: was "last number", now looks for a bare label like A/B/C/D
     matches = re.findall(r"\b([A-D])\b", cleaned)
     if matches:
         return matches[-1].upper(), "marker missing, used last uppercase label", raw
@@ -224,9 +220,9 @@ def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[s
 
 def encode(c, vars: dict):
     """
+    Encodes the formal logic of each constraint.
     Recursively encodes a HybridConstraint into a Z3 expression.
     vars is a flat dict keyed by prefixed entity name: slot_Alice, group_Alice, kk_Alice.
-    Separated from z3_solve so it can be tested and reused independently.
     """
     t = c.type
 
@@ -261,6 +257,7 @@ def encode(c, vars: dict):
         raise ValueError(f"Unknown constraint type: {t}")
 
 
+# Recursively gather the distinct type tags in one constraint tree -> set[str].
 def _collect_types(c) -> set[str]:
     t = c.type
     types = {t}
@@ -270,6 +267,7 @@ def _collect_types(c) -> set[str]:
         for cl in c.claims:  types |= _collect_types(cl)
     return types
 
+# Gather the set of distinct constraint types used across a whole extraction -> set[str].
 def _used_types(extracted) -> set[str]:
     types = set()
     for c in extracted.constraints:
@@ -282,6 +280,7 @@ def _used_types(extracted) -> set[str]:
                 types |= _collect_types(c)
     return types
 
+# Recursively tally each type tag in one constraint tree into `counter` returns None (mutates).
 def _count_types(c, counter: Counter) -> None:
     counter[c.type] += 1
     t = c.type
@@ -290,6 +289,7 @@ def _count_types(c, counter: Counter) -> None:
     elif t in ("and", "or"):
         for cl in c.claims:  _count_types(cl, counter)
 
+# Count occurrences of every constraint type across a whole extraction -> dict[str, int].
 def constraint_type_counts(extracted) -> dict:
     counter = Counter()
     for c in extracted.constraints:
@@ -306,6 +306,9 @@ def constraint_type_counts(extracted) -> dict:
 ORDERING_TYPES = {"before", "immediately_before", "adjacent", "slot_fixed"}
 GROUPING_TYPES = {"same_group", "different_group", "exactly_n", "is_in"}
 KK_TYPES       = {"is_truth_teller", "is_deceiver"}
+
+##LEFT OFF HERE
+
 
 def z3_solve(extracted) -> dict:
     solver = Solver()
