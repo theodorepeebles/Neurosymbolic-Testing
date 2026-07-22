@@ -19,7 +19,7 @@ from functools import partial
 
 from pipeline import (
     run_ns_pipeline, baseline_llm_solve, constraint_type_counts,
-    extract_logic_problem, extract_finetuned, z3_solve,
+    extract_logic_problem, z3_solve,
 )
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
@@ -55,8 +55,8 @@ MODEL_SETS = [
     },
 ]
 
-# Models that use extract_finetuned (minimal FT_EXTRACTION_SYSTEM prompt).
-# All others use extract_logic_problem (rich domain-specific prompt with examples).
+# Models extracted with finetuned=True (minimal FT_EXTRACTION_SYSTEM prompt, raw JSON).
+# All others use the default rich domain-specific prompt with examples.
 FINETUNED_MODELS = {"SFT_Extraction_Qwen3_0.6b"}
 
 
@@ -137,10 +137,11 @@ for i, row in enumerate(test_rows, 1):
     for ms in MODEL_SETS:
         print(f"  --- NS extract [{ms['name']}] ---")
 
-        if ms["extraction_llm"] in FINETUNED_MODELS:
-            extract_fn = partial(extract_finetuned, model=ms["extraction_llm"])
-        else:
-            extract_fn = partial(extract_logic_problem, model=ms["extraction_llm"])
+        extract_fn = partial(
+            extract_logic_problem,
+            model=ms["extraction_llm"],
+            finetuned=ms["extraction_llm"] in FINETUNED_MODELS,
+        )
 
         error_tb = None
         t0 = time.time()

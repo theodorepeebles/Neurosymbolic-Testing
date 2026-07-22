@@ -87,37 +87,12 @@ def classify_domains(problem_text: str, model: str) -> list[str]:
     return domains
 
 
-FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
-
-
-def extract_finetuned(problem_text, active_domains, LogicProblem, model, unsat_context=None):
-    base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
-                   f"Extract this logic puzzle:\n\n{problem_text}")
-    prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
-    schema = LogicProblem.model_json_schema()
-
-    unmatched_errors, attempts_used = [], 0
-    last_raw = ""
-    for attempt in range(MAX_ATTEMPTS):
-        raw = ask_llm(prompt=prompt, system=FT_EXTRACTION_SYSTEM, fmt=schema, model=model, is_extraction=True)
-        last_raw = raw
-        attempts_used += 1
-        try:
-            return LogicProblem(**json.loads(raw)), unmatched_errors, attempts_used, raw
-        except Exception as e:
-            unmatched_errors.append({"attempt": attempt + 1,
-                                     "error_type": type(e).__name__, "error_msg": str(e)})
-            prompt = (f"{base_prompt}\n\nYour previous JSON:\n{raw}\n\n"
-                      f"It failed: {e}\n\nReturn corrected JSON.")
-    return None, unmatched_errors, attempts_used, last_raw
-
-
-
-
-
-
 # For LLM retry upon schema validation failure
 MAX_ATTEMPTS = 1
+
+
+FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
+
 
 
 # LogicProblem is a parameter instead of a fixed import — it's built
@@ -128,15 +103,29 @@ def extract_logic_problem(
     LogicProblem: type,
     model: str,
     unsat_context: str = None,
+    finetuned: bool = False,
 ) -> tuple:
+    """
+    Extract a logic puzzle into a LogicProblem via the LLM, with schema-validation retry.
 
-
+    finetuned=True routes to a fine-tuned extraction model: the minimal
+    FT_EXTRACTION_SYSTEM system prompt, active domains prepended to the user prompt,
+    and raw json.loads (no fence-stripping — the FT model runs under fmt=schema grammar
+    constraints that force output to start with '{', so fences/preamble can't occur).
+    finetuned=False (default) uses the rich domain-specific prompt with examples and
+    strips markdown fences before parsing (cloud-routed models may wrap output).
+    """
 
     unmatched_errors = []
     attempts_used = 0
 
-    extraction_system = build_extraction_prompt(active_domains)
-    base_prompt = f"Extract this logic puzzle:\n\n{problem_text}"
+    if finetuned:
+        extraction_system = FT_EXTRACTION_SYSTEM
+        base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
+                       f"Extract this logic puzzle:\n\n{problem_text}")
+    else:
+        extraction_system = build_extraction_prompt(active_domains)
+        base_prompt = f"Extract this logic puzzle:\n\n{problem_text}"
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
 
     schema = LogicProblem.model_json_schema()
@@ -157,8 +146,12 @@ def extract_logic_problem(
         attempts_used += 1
 
         try:
-            cleaned = re.sub(r"^```(json)?\s*|```$", "", raw.strip(), flags=re.M).strip()
-            parsed = json.loads(cleaned)
+            if finetuned:
+                # FT model runs under grammar constraints → raw JSON, no fences to strip
+                parsed = json.loads(raw)
+            else:
+                cleaned = re.sub(r"^```(json)?\s*|```$", "", raw.strip(), flags=re.M).strip()
+                parsed = json.loads(cleaned)
 
             logic_prob = LogicProblem(**parsed)
 
@@ -187,7 +180,7 @@ def extract_logic_problem(
             print(f"  [Parse failed attempt {attempt+1}/{MAX_ATTEMPTS}: {e}]")
 
             prompt = (
-                f"Extract this logic puzzle:\n\n{problem_text}\n\n"
+                f"{base_prompt}\n\n"
                 f"Your previous attempt returned this JSON:\n{raw}\n\n"
                 f"It failed validation with this error: {error_msg}\n\n"
                 f"Rules to remember:\n{hints_block}\n\n"
@@ -338,7 +331,7 @@ Grouping constraints:
 
 
 # --- Builder ---
-
+# only used for the non-finetuned models
 def build_extraction_prompt(active_domains: list[str]) -> str:
     key = frozenset(active_domains)
 
