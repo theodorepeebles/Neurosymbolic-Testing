@@ -7,7 +7,7 @@ from collections import Counter
 from validators import DOMAIN_CONSTRAINT_CLASSES, build_hybrid_schema
 
 
-def ask_llm(prompt: str, system: str, fmt: str | None = None, model: str = "qwen3:8b", think: bool = False, timeout: int = 150, is_extraction: bool = False) -> str:
+def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool = False, timeout: int = 150, is_extraction: bool = False) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     Returns:
@@ -60,7 +60,7 @@ ACTIVE_DOMAINS: <comma-separated, no spaces>
 
 Example: ACTIVE_DOMAINS: ordering,knights_and_knaves"""
 
-def classify_domains(problem_text: str, model: str = "qwen3:8b") -> list[str]:
+def classify_domains(problem_text: str, model: str) -> list[str]:
     response = ask_llm(prompt=problem_text, system=CLASSIFIER_SYSTEM, think=False, model=model)
 
     # Scan from the end — guards against "ACTIVE_DOMAINS" appearing in reasoning trace
@@ -90,7 +90,7 @@ def classify_domains(problem_text: str, model: str = "qwen3:8b") -> list[str]:
 FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
 
 
-def extract_finetuned(problem_text, active_domains, LogicProblem, unsat_context=None, model="SFT_Extraction_Qwen3_0.6b"):
+def extract_finetuned(problem_text, active_domains, LogicProblem, model, unsat_context=None):
     base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
                    f"Extract this logic puzzle:\n\n{problem_text}")
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
@@ -126,8 +126,8 @@ def extract_logic_problem(
     problem_text: str,
     active_domains,
     LogicProblem: type,
+    model: str,
     unsat_context: str = None,
-    model: str = "qwen3:8b"
 ) -> tuple:
 
 
@@ -380,7 +380,7 @@ BASELINE_LOGIC_SYSTEM = (
     "Example: ANSWER: A"
 )
 
-def baseline_llm_solve(problem: str, model: str = "qwen3:8b", think: bool = False) -> tuple[str | None, str | None, str]:
+def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[str | None, str | None, str]:
     """
     Sends the problem directly to the LLM and parses an answer choice label.
     Returns (label, None, raw) on success, (None, error_string, raw) on parse failure.
@@ -651,9 +651,8 @@ def _handle_unsat_retry(
     
 
 
-def run_ns_pipeline(problem: str, extract_fn, active_domains: list[str] | None = None,
-                    classifier_model: str = "qwen3:8b",
-                    formatter_model: str = "qwen3:8b",
+def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_model: str,
+                    active_domains: list[str] | None = None,
                     verbalize: bool = False) -> dict:
     result = {
         "extracted":        None,

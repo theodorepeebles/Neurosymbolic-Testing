@@ -32,6 +32,10 @@ NUM_TEST_EXAMPLES = None
 
 RUN_BASELINE = False
 
+# Model used for the direct-LLM baseline (run once per problem, so it isn't tied to a
+# single MODEL_SETS entry). Single source of truth for the baseline model.
+BASELINE_MODEL = "qwen3:8b"
+
 LOG_TO_DB = True
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
@@ -123,7 +127,7 @@ for i, row in enumerate(test_rows, 1):
     # Baseline — run once per problem, not once per model set
     if RUN_BASELINE:
         t0 = time.time()
-        baseline_answer, _baseline_parse_error, _baseline_raw = baseline_llm_solve(problem)
+        baseline_answer, _baseline_parse_error, _baseline_raw = baseline_llm_solve(problem, model=BASELINE_MODEL)
         record["baseline_correct"] = (
             baseline_answer is not None and gt is not None
             and baseline_answer.upper() == gt.upper()
