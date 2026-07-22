@@ -4,11 +4,25 @@ from typing import Annotated, Union, Optional, Literal
 
 # --- Leaf constraint classes (split by field shape; no forward refs, safe at module level) ---
 
-# evidence_text: the exact source clause in problem_text this constraint was extracted from.
-# The LLM emits the text (it never computes character offsets); attribution.py converts it
+
+# Grouped by field shape, not by individual `type` nor by domain:
+#   - by type   -> near-duplicate classes (before/immediately_before/adjacent are
+#                  field-identical); bloats the schema and duplicates every field.
+#   - by domain -> one kitchen-sink class must union every field any type in the domain
+#                  uses, most inapplicable per type. Because all fields are then declared,
+#                  extra="forbid" can't reject wrong-field combos, and constrained decoding
+#                  can emit nonsense (e.g. a slot_fixed carrying left/right).
+# By shape, each class declares exactly its fields, so extra="forbid" rejects anything
+# extra and the grammar can't represent invalid type/field combos -- limiting what the LLM
+# can emit wrong. The `type` Literal still enumerates each value, so per-type dispatch on
+# the discriminated union is unchanged.
+
+
+# evidence_text: the exact text clause in problem_text this constraint was extracted from.
+# The LLM emits the text; attribution.py converts it
 # to a [start, end] span later by substring-matching against problem_text. Optional (default
-# None) so it stays out of the way for old data and grammar-constrained extraction. Lives on
-# the top-level constraint object at clue granularity — see attribution.py for the scheme.
+# None) because nested children of logical wrappers always keep None (the wrapper carries the clue's sentence)
+# and in case the LLM fails to extract it
 
 class BinaryOrdering(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -52,6 +66,7 @@ class IsIn(BaseModel):
     evidence_text: Optional[str] = None
 
 
+# LEFT OFF HERE
 # --- Registry: domain -> LIST of leaf classes ---
 
 DOMAIN_CONSTRAINT_CLASSES = {
@@ -90,6 +105,8 @@ def build_hybrid_schema(active_domains: list[str]) -> type:
         evidence_text=(Optional[str], None))
 
     members = tuple(leaf_classes) + (IfThen, NotC, AndOr)
+
+    # LLM only allowed to fill in fields associated with the leaf class containing whatever type is chosen
     HybridConstraint = Annotated[Union[members], Field(discriminator="type")]
 
     namespace = {"HybridConstraint": HybridConstraint}
