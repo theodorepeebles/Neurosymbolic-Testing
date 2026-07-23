@@ -175,6 +175,45 @@ Grouping constraints:
 }
 
 
+# --- Free-text REPL (Phase 2) ---
+# Maps a plain-English question about ONE loaded puzzle to the structured REPL query
+# {variable, value, query_type}. Runs under a JSON-schema grammar (fmt=schema) that
+# hard-constrains `variable` to the puzzle's real variables and exposes a `cannot_answer`
+# escape hatch, so the model can only emit a valid variable or explicitly decline.
+
+FREETEXT_REPL_SYSTEM = """You translate a natural-language question about ONE logic puzzle into a structured query. Output ONLY a JSON object {query_type, variable, value}. Do NOT solve the puzzle.
+
+query_type — pick exactly one:
+  whynot        — "why can't X be V?" / claims X=V is impossible.  Needs variable AND value.
+  can           — "can X be V?" / asks whether X=V is possible.    Needs variable AND value.
+  forces        — "what forces X?" / "why is X fixed?".            Needs variable only; value is null.
+  cannot_answer — the question is off-topic, or can't be expressed over the listed variables. value is null.
+
+variable — MUST be one of the variables listed for this puzzle. Naming:
+  slot_<Entity>  — that entity's position/order (integer value).
+  group_<Entity> — that entity's group        (integer value).
+  kk_<Entity>    — whether that entity is a truth-teller (value true) or a deceiver (value false).
+
+value — for slot_/group_ the position/group number as a string ("2"); for kk_ "true"/"false"; null for forces/cannot_answer.
+
+Examples (variables differ per puzzle — only use ones actually listed):
+  "why can't Alice be second?"        -> {"query_type":"whynot","variable":"slot_Alice","value":"2"}
+  "could Bob be a knight?"            -> {"query_type":"can","variable":"kk_Bob","value":"true"}
+  "what pins Carol's position?"       -> {"query_type":"forces","variable":"slot_Carol","value":null}
+  "what's the capital of France?"     -> {"query_type":"cannot_answer","variable":"slot_Alice","value":null}"""
+
+
+def build_freetext_repl_prompt(problem_text: str, variables_block: str, question: str) -> str:
+    """User prompt for the free-text REPL extractor: ground the model in this puzzle's
+    text + available variables, then hand it the question. `variables_block` is the
+    caller's list_variables(ctx, lp) rendering."""
+    return (
+        f"Puzzle:\n{problem_text}\n\n"
+        f"Available variables:\n{variables_block}\n\n"
+        f"Question: {question}"
+    )
+
+
 # --- Builder ---
 # only used for the non-finetuned models
 def build_extraction_prompt(active_domains: list[str]) -> str:
