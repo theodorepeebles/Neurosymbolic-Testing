@@ -85,6 +85,10 @@ def classify_domains(problem_text: str, model: str) -> list[str]:
 # For LLM retry upon schema validation failure
 MAX_ATTEMPTS = 1
 
+# Set False to silence diagnostic/timing prints in run_ns_pipeline
+# (error/failure prints stay on regardless).
+VERBOSE = True
+
 
 # LogicProblem is a parameter instead of a fixed import — it's built
 # dynamically by build_hybrid_schema() so it can't be referenced at module level
@@ -512,11 +516,11 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
                     "Set use_ground_truth_domains=False to classify domains at runtime instead."
                 )
         else:
-            print(f"  Classifying domains...")
+            if VERBOSE: print(f"  Classifying domains...")
             t_cls_start = time.time()
             active_domains = classify_domains(problem, model=classifier_model)
             t_cls_end = time.time()
-            print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
+            if VERBOSE: print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
             result["llm_calls"] += 1
 
         result["active_domains"] = active_domains
@@ -524,14 +528,14 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         LogicProblem      = build_hybrid_schema(active_domains)
 
         # STEP 2 — extract
-        print(f"  Waiting for LLM extraction...")
+        if VERBOSE: print(f"  Waiting for LLM extraction...")
         t_ext_start = time.time()
         extracted, unmatched_errors, ext_calls, extraction_raw = extract_fn(
             problem, active_domains, LogicProblem
         )
         t_ext_end = time.time()
-        print(f"  Got extraction response ({t_ext_end - t_ext_start:.2f}s)")
-        print(f"  Raw extraction response:\n{extraction_raw}")
+        if VERBOSE: print(f"  Got extraction response ({t_ext_end - t_ext_start:.2f}s)")
+        if VERBOSE: print(f"  Raw extraction response:\n{extraction_raw}")
 
         result["extraction_raw"]   = extraction_raw
         result["llm_calls"]       += ext_calls
@@ -562,8 +566,8 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         result["z3_status"]        = z3_result["status"]
         result["question_results"] = z3_result.get("question_results")
 
-        print(f"  Z3 status         : {z3_result['status']}")
-        print(f"  Question results  : {z3_result.get('question_results')}")
+        if VERBOSE: print(f"  Z3 status         : {z3_result['status']}")
+        if VERBOSE: print(f"  Question results  : {z3_result.get('question_results')}")
 
         if z3_result["status"] != "sat":
             result["formatted_output"] = f"ERROR: Z3 returned {z3_result['status']}"
