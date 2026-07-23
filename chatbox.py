@@ -24,11 +24,14 @@ Endpoints (POST, JSON):
 
 import json
 import os
+import re
 import socket
 import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import requests
 
 import repl
 import explanation
@@ -45,6 +48,18 @@ TEMPLATE = os.path.join(HERE, "chatbox.template.html")
 EXTRACTION_MODEL = "SFT_Extraction_Qwen3_0.6b-v4"
 EXTRACTION_FINETUNED = True
 CLASSIFIER_MODEL = repl.FREETEXT_MODEL  # qwen3:8b
+
+# Live thinking trace. The mapping runs as ONE grammar-constrained call whose schema has a
+# `reasoning` field FIRST — the model reasons, then emits the answer fields as the continuation of
+# that same generation (so the trace faithfully explains the selected answer, and the answer fields
+# stay enum-locked so validity is unchanged). We stream that call and peel out the reasoning field.
+# Set False to skip the trace and use the plain constrained repl.parse_freetext.
+SHOW_THINKING = True
+OLLAMA_URL = "http://localhost:11434/api/generate"
+THINKING_SYSTEM_SUFFIX = (
+    "\n\nFirst use the \"reasoning\" field to briefly think through which variable, value, and "
+    "query_type the question maps to; then fill query_type, variable, and value."
+)
 
 # The currently loaded puzzle. Single-user local tool, so one global session is enough; the lock
 # serializes the heavy work (Z3 and Ollama aren't thread-safe) and guards SESSION mutation.
@@ -166,35 +181,117 @@ def handle_extract(data: dict) -> dict:
             return {"error": f"{type(e).__name__}: {e}"}
 
 
-def handle_ask(data: dict) -> dict:
-    q = (data.get("question") or "").strip()
-    if not q:
-        return {"error": "empty question"}
-    with LOCK:
-        if not SESSION:
-            return {"error": "load a problem first"}
-        ctx, lp = SESSION["ctx"], SESSION["lp"]
-        try:
-            # Always route through the LLM — no raw-command / first-keyword shortcut.
-            parsed = repl.parse_freetext(q, ctx, lp)
-        except RuntimeError as e:     # Ollama unreachable / timeout
-            return {"error": f"LLM error: {e}"}
-        if parsed is repl.CANNOT_ANSWER:
-            return {"cannot_answer": True}
-        var, val, qtype = parsed
-        try:
-            prose, mcs = repl.run_query(
-                ctx, SESSION["q_index"], SESSION["span_index"], SESSION["labels"], var, val, qtype
-            )
-        except Exception as e:  # noqa: BLE001 — surface engine errors as a chat bubble
-            return {"error": f"{type(e).__name__}: {e}"}
-        return {"interpreted": repl.format_structured(var, val, qtype), "prose": prose, "mcs": mcs}
+def _reasoning_schema(ctx) -> dict:
+    """Mapping schema with a `reasoning` string FIRST, so the model reasons then answers in one
+    grammar-constrained generation. The answer fields carry the same enums as repl._freetext_schema,
+    so structural validity is identical to the non-thinking path."""
+    return {
+        "type": "object",
+        "properties": {
+            "reasoning": {"type": "string"},
+            "query_type": {"type": "string", "enum": list(repl.QUERY_TYPES) + ["cannot_answer"]},
+            "variable": {"type": "string", "enum": sorted(ctx.zvars)},
+            "value": {"type": ["string", "null"]},
+        },
+        "required": ["reasoning", "query_type", "variable", "value"],
+    }
+
+
+def _parse_mapping(raw: str, ctx, lp):
+    """Validate the finished mapping JSON like repl.parse_freetext. Returns (var,val,qtype) or
+    repl.CANNOT_ANSWER on any failure. The extra `reasoning` field is ignored here."""
+    try:
+        cleaned = re.sub(r"^```(json)?\s*|```$", "", raw.strip(), flags=re.M).strip()
+        obj = json.loads(cleaned)
+        qtype, var = obj["query_type"], obj["variable"]
+        if qtype not in repl.QUERY_TYPES or var not in ctx.zvars:
+            return repl.CANNOT_ANSWER
+        if qtype == "forces":
+            return var, None, qtype
+        rawval = obj.get("value")
+        if rawval is None:
+            return repl.CANNOT_ANSWER
+        return var, repl.parse_value(var, str(rawval), lp), qtype
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return repl.CANNOT_ANSWER
+
+
+_REASONING_OPEN = re.compile(r'"reasoning"\s*:\s*"')
+
+
+def _find_str_end(buf: str, start: int) -> int:
+    """Index of the unescaped closing quote of a JSON string that begins at `start`, or -1."""
+    i, esc = start, False
+    while i < len(buf):
+        c = buf[i]
+        if esc:
+            esc = False
+        elif c == "\\":
+            esc = True
+        elif c == '"':
+            return i
+        i += 1
+    return -1
+
+
+def _decode_partial_jsonstr(content: str):
+    """json-decode JSON-string CONTENT (no surrounding quotes) that may end mid-escape.
+    Trims a dangling escape so it parses; returns the decoded text or None."""
+    s = content
+    if (len(s) - len(s.rstrip("\\"))) % 2 == 1:   # odd trailing backslashes -> incomplete escape
+        s = s[:-1]
+    m = re.search(r"\\u[0-9a-fA-F]{0,3}$", s)      # incomplete \uXXXX at the end
+    if m:
+        s = s[:m.start()]
+    try:
+        return json.loads('"' + s + '"')
+    except ValueError:
+        return None
+
+
+def stream_ask(question: str, ctx, lp, emit_thinking):
+    """ONE streamed, grammar-constrained call. Peels the `reasoning` field out of the token stream
+    (calling emit_thinking with decoded deltas) and returns the validated mapping
+    (var,val,qtype)|repl.CANNOT_ANSWER. Raises RuntimeError if Ollama is unreachable."""
+    body = {
+        "model": repl.FREETEXT_MODEL,
+        "system": repl.FREETEXT_REPL_SYSTEM + THINKING_SYSTEM_SUFFIX,
+        "prompt": repl.build_freetext_repl_prompt(SESSION["problem_text"], repl.list_variables(ctx, lp), question),
+        "stream": True, "think": False, "format": _reasoning_schema(ctx),
+        "options": {"temperature": 0, "top_k": 1, "num_ctx": 4096, "num_predict": 1024},
+    }
+    buf, r_start, emitted, closed = "", None, 0, False
+    try:
+        resp = requests.post(OLLAMA_URL, json=body, timeout=180, stream=True)
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+            buf += chunk.get("response", "")
+            if not closed:
+                if r_start is None:
+                    m = _REASONING_OPEN.search(buf)
+                    if m:
+                        r_start = m.end()
+                if r_start is not None:
+                    end = _find_str_end(buf, r_start)
+                    decoded = _decode_partial_jsonstr(buf[r_start:end] if end != -1 else buf[r_start:])
+                    if decoded is not None and len(decoded) > emitted:
+                        emit_thinking(decoded[emitted:])
+                        emitted = len(decoded)
+                    if end != -1:
+                        closed = True
+            if chunk.get("done"):
+                break
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Ollama request failed: {e}")
+    return _parse_mapping(buf, ctx, lp)
 
 
 ROUTES = {
     "/api/load_random": lambda data: handle_load_random(),
     "/api/extract": handle_extract,
-    "/api/ask": handle_ask,
 }
 
 
@@ -237,6 +334,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):  # noqa: N802
+        if self.path == "/api/ask":
+            self._handle_ask_stream()
+            return
         route = ROUTES.get(self.path)
         if route is None:
             self.send_error(404)
@@ -245,6 +345,48 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(route(self._read_json()))
         except Exception as e:  # noqa: BLE001 — always answer with JSON the UI can show
             self._send_json({"error": f"{type(e).__name__}: {e}"})
+
+    def _sse(self, obj: dict) -> None:
+        """Write one Server-Sent Event; raise BrokenPipeError if the client has gone."""
+        self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def _handle_ask_stream(self):
+        """Stream one question: reasoning deltas (if SHOW_THINKING) then the answer, over SSE.
+        The answer always comes from the grammar-constrained mapping, so validity is unchanged."""
+        data = self._read_json()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            q = (data.get("question") or "").strip()
+            if not q:
+                self._sse({"error": "empty question"}); self._sse({"done": True}); return
+            with LOCK:
+                if not SESSION:
+                    self._sse({"error": "load a problem first"}); self._sse({"done": True}); return
+                ctx, lp = SESSION["ctx"], SESSION["lp"]
+                try:
+                    if SHOW_THINKING:
+                        parsed = stream_ask(q, ctx, lp, emit_thinking=lambda d: self._sse({"thinking_delta": d}))
+                    else:
+                        parsed = repl.parse_freetext(q, ctx, lp)
+                except RuntimeError as e:          # Ollama unreachable / timeout
+                    self._sse({"error": f"LLM error: {e}"}); self._sse({"done": True}); return
+                if parsed is repl.CANNOT_ANSWER:
+                    self._sse({"cannot_answer": True}); self._sse({"done": True}); return
+                var, val, qtype = parsed
+                try:
+                    prose, mcs = repl.run_query(
+                        ctx, SESSION["q_index"], SESSION["span_index"], SESSION["labels"], var, val, qtype
+                    )
+                except Exception as e:  # noqa: BLE001 — surface engine errors as a chat bubble
+                    self._sse({"error": f"{type(e).__name__}: {e}"}); self._sse({"done": True}); return
+                self._sse({"interpreted": repl.format_structured(var, val, qtype), "prose": prose, "mcs": mcs})
+                self._sse({"done": True})
+        except (BrokenPipeError, ConnectionError, OSError):
+            return  # client closed the stream — stop quietly
 
     def log_message(self, *args):  # silence the default per-request stderr logging
         pass

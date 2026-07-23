@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NS · Chat</title>
+<!--
+  Sleek dark chat UI for the logic-puzzle REPL, served by chatbox.py.
+  Left  = problem loader + variables + extraction/answer insights.
+  Right = Claude-style chat; each question is mapped to whynot/can/forces and answered by Z3.
+
+  SECURITY: problem text, extracted JSON, and answer prose are untrusted (model/DB) output. They
+  are rendered exclusively via textContent / createElement — never innerHTML — so no markup in the
+  data can execute. (Same rule as debug_viewer.template.html.)
+-->
+<style>
+  :root{
+    --bg:#262624; --panel:#2f2e2c; --panel2:#38363359; --raise:#3a3936;
+    --border:#403f3b; --border2:#4c4a45;
+    --fg:#f5f4ee; --muted:#b7b3aa; --faint:#8a877e;
+    --accent:#d97757; --accent-2:#e08a6b; --accent-bg:#d977571f;
+    --user-bg:#34332f; --assistant-bg:#00000000;
+    --ok:#5fb87a; --ok-bg:#5fb87a1f; --bad:#e0685f; --bad-bg:#e0685f1f;
+    --ord:#56d4dd; --grp:#c69bff; --kk:#e3b341;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}  /* keep hidden elements hidden even when .card sets display:flex */
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);font:14.5px/1.6 var(--sans);
+    display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono)}
+  ::-webkit-scrollbar{width:11px;height:11px}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:7px;border:3px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#5a574f;background-clip:content-box}
+
+  button{font:inherit;color:inherit;cursor:pointer;background:var(--raise);
+    border:1px solid var(--border2);border-radius:9px;padding:7px 13px;transition:.14s}
+  button:hover:not(:disabled){border-color:#5c584f;background:#43413d}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.accent{background:var(--accent);border-color:var(--accent);color:#2a1a12;font-weight:600}
+  button.accent:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
+  textarea{font:inherit;color:inherit;background:#1f1e1c;border:1px solid var(--border2);
+    border-radius:11px;padding:10px 12px;width:100%;resize:none;transition:.14s}
+  textarea:focus{outline:none;border-color:var(--accent)}
+  textarea::placeholder{color:var(--faint)}
+
+  /* ---- header ---- */
+  header{padding:11px 20px;border-bottom:1px solid var(--border);background:var(--panel);
+    display:flex;align-items:center;gap:11px;flex-shrink:0}
+  header .logo{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#2a1a12;font-weight:800;font-size:13px}
+  header h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.2px}
+  header .sub{color:var(--faint);font-size:12.5px}
+  header .spacer{flex:1}
+  header .status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px}
+  header .status .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  header .status.ready .dot{background:var(--ok)}
+  header .status.busy .dot{background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  /* ---- shell: two roughly-equal panes ---- */
+  #app{flex:1;display:flex;min-height:0}
+  #left{flex:1 1 0;min-width:400px;border-right:1px solid var(--border);background:var(--panel);
+    overflow:hidden;padding:16px;display:flex;flex-direction:column;gap:14px}
+  #chat{flex:1 1 0;min-width:340px;display:flex;flex-direction:column;min-height:0}
+
+  /* ---- cards: each takes a share of the left column and scrolls its body internally ---- */
+  .card{background:var(--panel2);border:1px solid var(--border);border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:0}
+  #problem-card{flex:1 1 55%}
+  #insights{flex:1 1 45%}
+  .card-h{padding:11px 15px;font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;
+    color:var(--faint);border-bottom:1px solid var(--border);flex-shrink:0}
+  .card-b{padding:14px 15px;display:flex;flex-direction:column;gap:12px;overflow:auto;min-height:0}
+
+  .row{display:flex;gap:9px;align-items:center}
+  .row.wrap{flex-wrap:wrap}
+  .sep{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.7px}
+  .sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--border)}
+
+  .problem{white-space:pre-wrap;font-size:13.5px;line-height:1.62;color:var(--fg);
+    background:#1f1e1c;border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+    max-height:34vh;overflow:auto}
+  .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{font-size:11px;padding:2px 9px;border-radius:20px;background:var(--raise);
+    border:1px solid var(--border2);color:var(--muted)}
+  .pill.src{color:var(--accent);border-color:#6b4a3b;background:var(--accent-bg)}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:11.5px;padding:3px 10px;border-radius:8px;font-family:var(--mono);
+    background:var(--raise);border:1px solid var(--border2);display:inline-flex;align-items:center;gap:6px}
+  .chip .dt{width:8px;height:8px;border-radius:2.5px;flex-shrink:0}
+  .chip.dom{border-radius:20px;font-family:var(--sans);text-transform:capitalize}
+  .dt.ordering,.dt.slot{background:var(--ord)} .dt.grouping,.dt.group{background:var(--grp)}
+  .dt.knights_and_knaves,.dt.kk{background:var(--kk)}
+
+  .lbl{font-size:10.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--faint)}
+
+  /* answer choices */
+  .choice{display:flex;gap:9px;align-items:flex-start;padding:8px 10px;border-radius:9px;
+    background:#1f1e1c;border:1px solid var(--border)}
+  .choice.win{border-color:#3f6a4d;background:#243026}
+  .choice .mark{width:19px;height:19px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;
+    font-size:12px;font-weight:700;background:var(--bad-bg);color:var(--bad)}
+  .choice.win .mark{background:var(--ok-bg);color:var(--ok)}
+  .choice .c-b{min-width:0}
+  .choice .c-t{font-size:12.5px;color:var(--fg)}
+  .choice .c-t b{color:var(--fg)}
+  .choice .c-s{font-size:11px;color:var(--faint);font-family:var(--mono);margin-top:2px;overflow-wrap:anywhere}
+  .note{font-size:12.5px;color:var(--muted)}
+  .note.bad{color:var(--bad)}
+
+  details.json{background:#1f1e1c;border:1px solid var(--border);border-radius:10px}
+  details.json>summary{cursor:pointer;padding:9px 12px;font-size:12px;color:var(--muted);user-select:none}
+  details.json>summary:hover{color:var(--fg)}
+  details.json pre{margin:0;padding:0 13px 13px;font-family:var(--mono);font-size:11.5px;line-height:1.55;
+    color:#d9d5cb;overflow-x:auto;white-space:pre}
+
+  /* ---- chat column ---- */
+  #transcript{flex:1;overflow:auto;padding:26px 0}
+  #twrap{max-width:760px;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:20px}
+  .empty{color:var(--faint);text-align:center;margin-top:14vh;font-size:15px}
+  .empty .big{font-size:34px;margin-bottom:12px}
+
+  .msg{display:flex;flex-direction:column;gap:6px;animation:rise .22s ease}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .msg.user{align-items:flex-end}
+  .msg .who{font-size:11px;color:var(--faint);letter-spacing:.4px;padding:0 4px}
+  .bubble{max-width:86%;padding:11px 15px;border-radius:16px;white-space:pre-wrap;line-height:1.62}
+  .msg.user .bubble{background:var(--user-bg);border:1px solid var(--border);border-bottom-right-radius:5px}
+  .msg.assistant .bubble{background:var(--assistant-bg);padding:2px 4px;max-width:100%}
+  .msg.system .bubble{background:var(--bad-bg);border:1px solid #6a3d38;color:#f0c9c3;font-size:13.5px}
+  .msg.system.info .bubble{background:var(--raise);border-color:var(--border2);color:var(--muted)}
+
+  .interp{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;
+    color:var(--accent);background:var(--accent-bg);border:1px solid #6b4a3b;border-radius:8px;
+    padding:3px 10px;margin-bottom:9px;align-self:flex-start}
+  .interp .k{color:var(--faint)}
+  .mcs{margin-top:9px;font-size:12.5px;color:var(--muted);border-left:2px solid var(--border2);padding-left:11px}
+
+  /* streamed thinking trace */
+  details.think{background:#211f1d;border:1px solid var(--border);border-radius:11px;margin-bottom:10px;align-self:flex-start;max-width:100%}
+  details.think>summary{cursor:pointer;padding:8px 12px;font-size:12px;color:var(--faint);
+    user-select:none;list-style:none;display:flex;align-items:center;gap:7px}
+  details.think>summary::-webkit-details-marker{display:none}
+  details.think>summary::before{content:"\25b8";transition:.15s;display:inline-block}
+  details.think[open]>summary::before{transform:rotate(90deg)}
+  details.think>summary:hover{color:var(--muted)}
+  details.think .tbody{padding:2px 13px 12px;font-size:12.5px;line-height:1.65;color:var(--muted);
+    white-space:pre-wrap;max-height:300px;overflow:auto}
+  details.think.streaming>summary{color:var(--accent)}
+
+  .dots{display:inline-flex;gap:4px;padding:6px 2px}
+  .dots i{width:7px;height:7px;border-radius:50%;background:var(--faint);animation:blink 1.2s infinite}
+  .dots i:nth-child(2){animation-delay:.2s} .dots i:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+
+  /* ---- composer ---- */
+  #composer{border-top:1px solid var(--border);background:var(--panel);padding:14px 24px 18px}
+  #cwrap{max-width:760px;margin:0 auto;display:flex;gap:10px;align-items:flex-end;
+    background:#1f1e1c;border:1px solid var(--border2);border-radius:16px;padding:8px 8px 8px 6px;transition:.14s}
+  #cwrap.focus{border-color:var(--accent)}
+  #input{border:none;background:transparent;max-height:180px;padding:8px 10px}
+  #input:focus{outline:none}
+  #send{border-radius:12px;padding:9px 16px;flex-shrink:0}
+  #hint{max-width:760px;margin:7px auto 0;color:var(--faint);font-size:11.5px;text-align:center}
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">NS</div>
+    <h1>Logic Puzzle Chat</h1>
+    <span class="sub">neurosymbolic REPL</span>
+    <span class="spacer"></span>
+    <span class="status" id="status"><span class="dot"></span><span id="status-t">no puzzle loaded</span></span>
+  </header>
+
+  <div id="app">
+    <aside id="left">
+      <section class="card" id="problem-card">
+        <div class="card-h">Problem</div>
+        <div class="card-b">
+          <div class="row">
+            <button id="btn-random" class="accent" style="flex:1">🎲 Load random puzzle</button>
+          </div>
+          <div class="sep">or paste your own</div>
+          <textarea id="paste" rows="4" placeholder="Paste a logic puzzle here — it will be classified and extracted…"></textarea>
+          <button id="btn-extract">Extract &amp; ask</button>
+          <div class="meta" id="problem-meta" hidden></div>
+          <div class="problem" id="problem-text" hidden></div>
+          <div id="vars-wrap" hidden>
+            <div class="lbl" style="margin-bottom:6px">Variables</div>
+            <div class="chips" id="vars"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="insights" hidden>
+        <div class="card-h">Extraction &amp; answer</div>
+        <div class="card-b">
+          <div>
+            <div class="lbl" style="margin-bottom:6px">Active domains</div>
+            <div class="chips" id="domains"></div>
+          </div>
+          <div>
+            <div class="lbl" style="margin-bottom:6px">Answer</div>
+            <div id="answer" style="display:flex;flex-direction:column;gap:7px"></div>
+          </div>
+          <details class="json">
+            <summary>Extracted JSON</summary>
+            <pre class="mono" id="json"></pre>
+          </details>
+        </div>
+      </section>
+    </aside>
+
+    <main id="chat">
+      <div id="transcript">
+        <div id="twrap">
+          <div class="empty" id="empty">
+            <div class="big">💬</div>
+            Load a random puzzle or paste one,<br>then ask a question about it.
+          </div>
+        </div>
+      </div>
+      <div id="composer">
+        <div id="cwrap">
+          <textarea id="input" rows="1" placeholder="Ask about the puzzle…  e.g. why can't Alice be second?" disabled></textarea>
+          <button id="send" class="accent" disabled>Send</button>
+        </div>
+        <div id="hint">Enter to send · Shift+Enter for a new line · try “can Bob be a knight?”, “what forces Carol?”</div>
+      </div>
+    </main>
+  </div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+
+let loaded = false;      // a puzzle is ready
+let busy = false;        // a request is in flight
+
+function setStatus(text, kind){ $("status-t").textContent = text; $("status").className = "status" + (kind ? " " + kind : ""); }
+function setBusy(b){ busy = b; refreshComposer(); }
+function refreshComposer(){
+  const canAsk = loaded && !busy;
+  $("input").disabled = !canAsk; $("send").disabled = !canAsk || !$("input").value.trim();
+  $("btn-random").disabled = busy; $("btn-extract").disabled = busy;
+}
+
+async function post(path, body){
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  return r.json();
+}
+
+/* ---------- left panel rendering ---------- */
+function renderSession(d){
+  // problem meta
+  const meta = $("problem-meta"); meta.textContent = ""; meta.hidden = false;
+  const srcPill = el("span","pill src", d.source === "dataset" ? "dataset puzzle" : "your puzzle");
+  meta.appendChild(srcPill);
+  if (d.run_id) meta.appendChild(el("span","pill mono", d.run_id.slice(0,10)));
+  if (d.variables && d.variables.num_slots) meta.appendChild(el("span","pill", d.variables.num_slots + " slots"));
+  if (d.variables && d.variables.num_groups) meta.appendChild(el("span","pill", d.variables.num_groups + " groups"));
+
+  const pt = $("problem-text"); pt.hidden = false; pt.textContent = d.problem_text || "(no text)";
+
+  // variables
+  const vw = $("vars-wrap"), vs = $("vars"); vs.textContent = ""; vw.hidden = false;
+  (d.variables && d.variables.names || []).forEach(v => {
+    const c = el("span","chip");
+    c.appendChild(el("span","dt " + v.split("_",1)[0]));
+    c.appendChild(el("span",null,v));
+    vs.appendChild(c);
+  });
+
+  // insights
+  $("insights").hidden = false;
+  const dom = $("domains"); dom.textContent = "";
+  (d.active_domains || []).forEach(name => {
+    const c = el("span","chip dom");
+    c.appendChild(el("span","dt " + name));
+    c.appendChild(el("span",null,name.replace(/_/g," ")));
+    dom.appendChild(c);
+  });
+  renderAnswer(d.answer || {});
+  $("json").textContent = d.extracted_json || "";
+
+  // enable chat
+  loaded = true;
+  clearTranscript();
+  addSystem("Puzzle loaded — ask a question about it.", true);
+  setStatus("ready", "ready");
+  refreshComposer();
+  $("input").focus();
+}
+
+function renderAnswer(ans){
+  const box = $("answer"); box.textContent = "";
+  if (ans.status === "sat" && ans.choices && ans.choices.length){
+    ans.choices.forEach(ch => {
+      const row = el("div","choice" + (ch.verified ? " win" : ""));
+      row.appendChild(el("div","mark", ch.verified ? "✓" : "✕"));
+      const b = el("div","c-b");
+      const t = el("div","c-t"); t.appendChild(el("b",null,ch.label + ". ")); t.appendChild(document.createTextNode(ch.type.replace(/_/g," ")));
+      b.appendChild(t);
+      b.appendChild(el("div","c-s", ch.constraints));
+      row.appendChild(b); box.appendChild(row);
+    });
+  } else if (ans.status === "sat"){
+    box.appendChild(el("div","note","Satisfiable (no multiple-choice question)."));
+  } else if (ans.status === "unsat"){
+    box.appendChild(el("div","note bad","UNSAT — the constraints contradict each other."));
+    (ans.unsat_core||[]).forEach(c => box.appendChild(el("div","c-s", "· " + c)));
+  } else {
+    box.appendChild(el("div","note", ans.status ? ("Z3: " + ans.status) : "—"));
+  }
+}
+
+/* ---------- chat rendering ---------- */
+function twrap(){ return $("twrap"); }
+function clearTranscript(){ const w = twrap(); w.textContent = ""; }
+function scrollDown(){ const t = $("transcript"); t.scrollTop = t.scrollHeight; }
+
+function addUser(text){
+  const m = el("div","msg user");
+  m.appendChild(el("div","who","You"));
+  m.appendChild(el("div","bubble", text));
+  twrap().appendChild(m); scrollDown();
+}
+function addSystem(text, info){
+  const m = el("div","msg system" + (info ? " info" : ""));
+  m.appendChild(el("div","bubble", text));
+  twrap().appendChild(m); scrollDown();
+}
+function addThinking(){
+  const m = el("div","msg assistant"); m.dataset.thinking = "1";
+  m.appendChild(el("div","who","Solver"));
+  const b = el("div","bubble");
+  const dots = el("span","dots"); dots.appendChild(el("i")); dots.appendChild(el("i")); dots.appendChild(el("i"));
+  b.appendChild(dots); m.appendChild(b);
+  twrap().appendChild(m); scrollDown();
+  return m;
+}
+/* ---------- actions ---------- */
+async function loadRandom(){
+  if (busy) return;
+  setBusy(true); setStatus("loading random puzzle…","busy");
+  try{
+    const d = await post("/api/load_random", {});
+    if (d.error){ setStatus("no puzzle loaded"); flashProblemError(d.error); }
+    else renderSession(d);
+  }catch(e){ setStatus("error"); flashProblemError(String(e)); }
+  finally{ setBusy(false); }
+}
+async function extractPuzzle(){
+  if (busy) return;
+  const text = $("paste").value.trim();
+  if (!text){ $("paste").focus(); return; }
+  setBusy(true); setStatus("classifying + extracting…","busy");
+  try{
+    const d = await post("/api/extract", {problem_text: text});
+    if (d.error){ setStatus("extraction failed"); flashProblemError(d.error + (d.raw ? "\n\n" + d.raw : "")); }
+    else renderSession(d);
+  }catch(e){ setStatus("error"); flashProblemError(String(e)); }
+  finally{ setBusy(false); }
+}
+function flashProblemError(msg){
+  const meta = $("problem-meta"); meta.hidden = false; meta.textContent = "";
+  const p = el("span","pill"); p.style.color = "var(--bad)"; p.style.borderColor = "#6a3d38";
+  p.textContent = "error"; meta.appendChild(p);
+  const pt = $("problem-text"); pt.hidden = false; pt.textContent = msg;
+}
+
+async function ask(){
+  const input = $("input"); const q = input.value.trim();
+  if (!q || !loaded || busy) return;
+  addUser(q);
+  input.value = ""; autogrow();
+  setBusy(true); setStatus("thinking…","busy");
+
+  const node = addThinking();               // assistant msg with the dots placeholder
+  const bubble = node.querySelector(".bubble");
+  let dotsCleared = false, thinkBox = null, thinkBody = null, answered = false;
+  const clearDots = () => { if (!dotsCleared){ bubble.textContent = ""; dotsCleared = true; } };
+  function ensureThinkBox(){
+    if (thinkBox) return;
+    clearDots();
+    thinkBox = el("details","think streaming"); thinkBox.open = true;
+    const sum = el("summary"); sum.appendChild(el("span",null,"thinking")); thinkBox.appendChild(sum);
+    thinkBody = el("div","tbody"); thinkBox.appendChild(thinkBody);
+    bubble.appendChild(thinkBox);
+  }
+  function renderAnswer(d){
+    clearDots();
+    if (thinkBox){ thinkBox.classList.remove("streaming"); thinkBox.open = false; }
+    if (d.interpreted){
+      const chip = el("span","interp");
+      chip.appendChild(el("span","k","interpreted as"));
+      chip.appendChild(el("span",null,d.interpreted));
+      bubble.appendChild(chip);
+    }
+    bubble.appendChild(el("div",null, d.prose || ""));
+    if (d.mcs) bubble.appendChild(el("div","mcs", d.mcs));
+    answered = true;
+  }
+  function handle(ev){
+    if (ev.thinking_delta != null){
+      ensureThinkBox();
+      thinkBody.appendChild(document.createTextNode(ev.thinking_delta));
+      thinkBody.scrollTop = thinkBody.scrollHeight; scrollDown();
+    } else if (ev.error){
+      clearDots();
+      if (thinkBox) thinkBox.classList.remove("streaming");
+      bubble.appendChild(el("div","note", ev.error));
+      answered = true; setStatus("ready","ready");
+    } else if (ev.cannot_answer){
+      clearDots();
+      if (thinkBox){ thinkBox.classList.remove("streaming"); thinkBox.open = false; }
+      bubble.appendChild(el("div","note","I can't map that to a whynot / can / forces question about this puzzle."));
+      answered = true; setStatus("ready","ready");
+    } else if (ev.interpreted != null || ev.prose != null){
+      renderAnswer(ev); setStatus("ready","ready");
+    }
+  }
+
+  try{
+    const resp = await fetch("/api/ask", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({question:q})});
+    const reader = resp.body.getReader(); const dec = new TextDecoder();
+    let sbuf = "";
+    while(true){
+      const {value, done} = await reader.read();
+      if (done) break;
+      sbuf += dec.decode(value, {stream:true});
+      let i;
+      while((i = sbuf.indexOf("\n\n")) !== -1){
+        const block = sbuf.slice(0, i); sbuf = sbuf.slice(i + 2);
+        const dl = block.split("\n").find(l => l.startsWith("data: "));
+        if (dl){ try { handle(JSON.parse(dl.slice(6))); } catch(_){} }
+      }
+    }
+    if (!answered && !thinkBox) node.remove();   // stream ended with nothing to show
+  }catch(e){
+    if (!thinkBox) node.remove();
+    addSystem(String(e)); setStatus("error");
+  }finally{ setBusy(false); input.focus(); scrollDown(); }
+}
+
+/* ---------- input wiring ---------- */
+function autogrow(){ const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+$("input").addEventListener("input", () => { autogrow(); refreshComposer(); });
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); ask(); } });
+$("input").addEventListener("focus", () => $("cwrap").classList.add("focus"));
+$("input").addEventListener("blur", () => $("cwrap").classList.remove("focus"));
+$("send").addEventListener("click", ask);
+$("btn-random").addEventListener("click", loadRandom);
+$("btn-extract").addEventListener("click", extractPuzzle);
+$("paste").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)){ e.preventDefault(); extractPuzzle(); } });
+refreshComposer();
+</script>
+</body>
+</html>
