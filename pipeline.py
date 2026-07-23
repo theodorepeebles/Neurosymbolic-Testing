@@ -320,6 +320,9 @@ def z3_solve(extracted) -> dict:
     all_types = _used_types(extracted)
     vars = {}
 
+
+    #encode basic domain axioms 
+
     if all_types & ORDERING_TYPES:
         vars.update({f"slot_{e}": Int(f"slot_{e}") for e in extracted.entities})
         solver.add(Distinct([vars[f"slot_{e}"] for e in extracted.entities]))
@@ -357,7 +360,6 @@ def z3_solve(extracted) -> dict:
 
     # -------------------------------------------------------------------------
     # 4. Verify each question independently via push/pop
-    # CHANGED: was a single question, now loops over extracted.questions
     # push/pop means base constraints are built once and reused across all questions
     # -------------------------------------------------------------------------
     question_results = []
@@ -386,8 +388,7 @@ def z3_solve(extracted) -> dict:
             choice_results[choice.label] = verified
             solver.pop()
 
-        correct = [label for label, verified in choice_results.items() if verified]
-        question_results.append(choice_results) #there is 1 choice_results per question
+        question_results.append(choice_results) # there is 1 choice_results per question
 
         solver.pop()
 
@@ -398,6 +399,13 @@ def z3_solve(extracted) -> dict:
 
 
 def format_constraint(c) -> str:
+    # Serializes a structured constraint into a readable function-call-style string
+    # (e.g. before(A, B)); recurses into nested constraints for the logical
+    # connectives (if_then, not, and, or). Used across the project for:
+    #   - labeling Z3 solver trackers for debugging / unsat-core inspection
+    #     (encode at :347, plus explanation.py and ns_training.py)
+    #   - rendering extracted puzzles into readable text (:434, :438, :441)
+    #   - displaying a choice's constraints in the chatbox UI (chatbox.py)
     t = c.type
     if   t == "before":             return f"before({c.left}, {c.right})"
     elif t == "immediately_before": return f"immediately_before({c.left}, {c.right})"
@@ -466,6 +474,7 @@ def _handle_unsat_retry(
 
 def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_model: str,
                     active_domains: list[str] | None = None,
+                    use_ground_truth_domains: bool = True,
                     verbalize: bool = False) -> dict:
     result = {
         "extracted":        None,
@@ -477,20 +486,26 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         "unmatched_errors": []
     }
     try:
-        # ── TEMPORARY TEST OVERRIDE ───────────────────────────────────────────
-        # Skips the LLM classifier. Uses active_domains injected by the caller
-        # (read from each sft_test.jsonl row in run.py) so each problem gets its
-        # ground-truth domains rather than a classifier prediction. Remove this
-        # block and uncomment STEP 1 below to restore normal classifier flow.
-        # ── END TEMPORARY TEST OVERRIDE ──────────────────────────────────────
-
-        # STEP 1 — classify domains (disabled during temporary test)
-        # print(f"  Classifying domains...")
-        # t_cls_start = time.time()
-        # active_domains = classify_domains(problem, model=classifier_model)
-        # t_cls_end = time.time()
-        # print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
-        # result["llm_calls"] += 1
+        # STEP 1 — determine active domains
+        # use_ground_truth_domains=True skips the LLM classifier and trusts the
+        # active_domains injected by the caller (read from each sft_test.jsonl row
+        # in run.py), so each problem gets its ground-truth domains. Set to False
+        # to instead predict domains with the classifier model (e.g. qwen3:8b).
+        if use_ground_truth_domains:
+            if active_domains is None:
+                raise ValueError(
+                    "use_ground_truth_domains=True but no ground-truth active_domains "
+                    "were provided for this problem. This happens on a novel problem that "
+                    "isn't in the dataset, so it has no ground-truth domains to look up. "
+                    "Set use_ground_truth_domains=False to classify domains at runtime instead."
+                )
+        else:
+            print(f"  Classifying domains...")
+            t_cls_start = time.time()
+            active_domains = classify_domains(problem, model=classifier_model)
+            t_cls_end = time.time()
+            print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
+            result["llm_calls"] += 1
 
         result["active_domains"] = active_domains
 

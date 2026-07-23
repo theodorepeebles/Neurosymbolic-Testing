@@ -32,6 +32,11 @@ NUM_TEST_EXAMPLES = None
 
 RUN_BASELINE = False
 
+# True: skip the classifier and feed each problem's ground-truth active_domains
+# (from sft_test.jsonl) into the pipeline, so domains are always correct.
+# False: predict domains at runtime with each MODEL_SETS entry's classifier_llm.
+USE_GROUND_TRUTH_DOMAINS = True
+
 # Model used for the direct-LLM baseline (run once per problem, so it isn't tied to a
 # single MODEL_SETS entry). Single source of truth for the baseline model.
 BASELINE_MODEL = "qwen3:8b"
@@ -57,7 +62,7 @@ MODEL_SETS = [
 
 # Models extracted with finetuned=True (minimal FT_EXTRACTION_SYSTEM prompt, raw JSON).
 # All others use the default rich domain-specific prompt with examples.
-FINETUNED_MODELS = {"SFT_Extraction_Qwen3_0.6b"}
+FINETUNED_MODELS = {"SFT_Extraction_Qwen3_0.6b-v4"}
 
 
 def load_test_set(path: str, limit=None) -> list[dict]:
@@ -150,6 +155,7 @@ for i, row in enumerate(test_rows, 1):
                 problem,
                 extract_fn,
                 active_domains=active_domains,
+                use_ground_truth_domains=USE_GROUND_TRUTH_DOMAINS,
                 classifier_model=ms["classifier_llm"],
                 formatter_model=ms["formatting_llm"],
                 verbalize=True,
