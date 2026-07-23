@@ -22,6 +22,9 @@ Example: ACTIVE_DOMAINS: ordering,knights_and_knaves"""
 
 # --- Extraction system prompts ---
 
+# NOTE: must stay byte-identical to SYSTEM in ns_training.py (the fine-tune training
+# prompt). If they drift, the fine-tuned extractor sees an out-of-distribution prompt
+# and degrades. Change both together.
 FT_EXTRACTION_SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
 
 

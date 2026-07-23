@@ -66,7 +66,6 @@ class IsIn(BaseModel):
     evidence_text: Optional[str] = None
 
 
-# LEFT OFF HERE
 # --- Registry: domain -> LIST of leaf classes ---
 
 DOMAIN_CONSTRAINT_CLASSES = {

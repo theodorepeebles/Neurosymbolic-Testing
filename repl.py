@@ -66,6 +66,8 @@ def load_puzzle(db_path: str, run_id: str, source: str = "gold"):
     return lp, problem_text
 
 
+# NOTE: domain-specific. The slot_/group_/kk_ prefixes and their value domains below are
+# the logic-puzzle variable model; a new domain would parse/validate its own variables here.
 def _domain_high(var: str, lp):
     prefix = var.split("_", 1)[0]
     if prefix == "slot":

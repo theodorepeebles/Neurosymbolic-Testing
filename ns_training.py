@@ -33,6 +33,9 @@ from datasets import Dataset
 
 raw = [json.loads(l) for l in lines]
 
+# NOTE: must stay byte-identical to FT_EXTRACTION_SYSTEM in logic/prompts.py (the
+# inference-time prompt). If they drift, the fine-tuned extractor degrades. Change both.
+# (This string is repeated in the inference cells below — keep all copies in sync.)
 SYSTEM = "Extract logic puzzles into JSON. Return ONLY a JSON object, no explanation."
 
 def to_messages(row):

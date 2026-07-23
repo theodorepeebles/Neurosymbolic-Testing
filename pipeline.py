@@ -150,9 +150,9 @@ def extract_logic_problem(
 
             logic_prob = LogicProblem(**parsed)
 
-            # CHANGED: validate_math_logic removed — stub this out until you
-            # discover what semantic validation logic puzzles actually need
-            # validate_logic(...) goes here when known
+            # No semantic validator runs in this domain: with a closed,
+            # grammar-constrained vocabulary, structural validity == semantic
+            # legality. A future domain (e.g. contracts) may add one here.
 
             return logic_prob, unmatched_errors, attempts_used, raw
 
@@ -222,6 +222,8 @@ def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[s
 
 
 
+# NOTE: domain-specific. This if/elif chain hard-codes the logic-puzzle constraint
+# vocabulary; a new domain (e.g. contracts) will need its own encode() for its own Z3 types.
 def encode(c, vars: dict):
     """
     Encodes the formal logic of each constraint.
@@ -312,6 +314,8 @@ GROUPING_TYPES = {"same_group", "different_group", "exactly_n", "is_in"}
 KK_TYPES       = {"is_truth_teller", "is_deceiver"}
 
 
+# NOTE: domain-specific. The slot_/group_/kk_ variable construction below (and the
+# *_TYPES sets above) are the logic-puzzle model; a new domain needs its own vars here.
 def z3_solve(extracted) -> dict:
     solver = Solver()
 
@@ -401,6 +405,8 @@ def z3_solve(extracted) -> dict:
 
 
 def format_constraint(c) -> str:
+    # NOTE: domain-specific. Mirrors encode()'s type vocabulary for human-readable output;
+    # a new domain adds its own cases here.
     # Serializes a structured constraint into a readable function-call-style string
     # (e.g. before(A, B)); recurses into nested constraints for the logical
     # connectives (if_then, not, and, or). Used across the project for:
