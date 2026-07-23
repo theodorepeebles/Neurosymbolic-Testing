@@ -1,3 +1,10 @@
+# ============================================================================
+# SUPERSEDED — no longer used since the switch to algorithmic SFT generation.
+# This is the old LLM-first approach: ask a model to invent a puzzle, then
+# Z3-verify it. Replaced by algorithmic_sft_generator.py, which builds puzzles
+# Z3-first (correct by construction) and only calls an LLM to paraphrase.
+# Kept for reference only; not part of the active pipeline.
+# ============================================================================
 """ollama_auto_sft.py — generate → run_ns_pipeline → Z3-verify → append, all via Ollama.
    Run: python ollama_auto_sft.py --target 2000"""
 import json, re, time, uuid, argparse, hashlib, random

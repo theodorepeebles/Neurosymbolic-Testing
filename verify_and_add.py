@@ -1,3 +1,11 @@
+# ============================================================================
+# SUPERSEDED — part of the old LLM-first flow, no longer used since the switch to
+# algorithmic SFT generation. Manually Z3-verifies externally generated rows
+# (e.g. Gemini batch output) and appends the passing ones. The algorithmic
+# generator (algorithmic_sft_generator.py) produces rows that are correct by
+# construction, so this manual verify-and-append step is obsolete.
+# Kept for reference only.
+# ============================================================================
 """
 Usage:
     python verify_and_add.py input.jsonl
