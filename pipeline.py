@@ -307,8 +307,6 @@ ORDERING_TYPES = {"before", "immediately_before", "adjacent", "slot_fixed"}
 GROUPING_TYPES = {"same_group", "different_group", "exactly_n", "is_in"}
 KK_TYPES       = {"is_truth_teller", "is_deceiver"}
 
-##LEFT OFF HERE
-
 
 def z3_solve(extracted) -> dict:
     solver = Solver()
@@ -430,6 +428,20 @@ def _handle_unsat_retry(
     z3_result: dict,
     extract_fn
 ) -> tuple:
+    """
+    CURRENTLY UNUSED. The only call site is commented out in run_ns_pipeline
+    (the '*** UNSAT RETRY DISABLED ***' block), and the live extraction call
+    never passes unsat_context — so nothing reaches this function today.
+
+    Recovery path for a base-problem Z3 unsat: it feeds the contradictory
+    constraints plus Z3's unsat core back to the extractor as unsat_context and
+    re-solves. It's left disabled because this "explain the error and ask the
+    model to fix it" strategy is a poor fit for the small fine-tuned extraction
+    model, which was never trained on correction prompts and treats that input as
+    out-of-distribution.
+
+    Retained for a possible future redesign.
+    """
 
     print(f"  [UNSAT] Retrying extraction...")
 
