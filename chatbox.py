@@ -68,6 +68,75 @@ LOCK = threading.Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Readable extraction rendering (YAML-ish, like open_debug_viewer)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scalar(v) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
+def _yaml_lines(obj, indent: int) -> list[str]:
+    """Recursive YAML-ish renderer. dict keys with None values are skipped (e.g. absent
+    evidence_text) to keep nested constraints clean, matching the debug viewer."""
+    pad = " " * indent
+    out: list[str] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if v is None:
+                continue
+            if isinstance(v, (dict, list)) and v:
+                out.append(f"{pad}{k}:")
+                out += _yaml_lines(v, indent + 2)
+            elif isinstance(v, list):
+                out.append(f"{pad}{k}: []")
+            elif isinstance(v, dict):
+                out.append(f"{pad}{k}: {{}}")
+            else:
+                out.append(f"{pad}{k}: {_scalar(v)}")
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict) and item:
+                sub = _yaml_lines(item, indent + 2)
+                out.append(pad + "- " + sub[0].lstrip())   # first field on the "- " line
+                out += sub[1:]
+            elif isinstance(item, (dict, list)):
+                out.append(f"{pad}- " + ("[]" if isinstance(item, list) else "{}"))
+            else:
+                out.append(f"{pad}- {_scalar(item)}")
+    return out
+
+
+def format_extraction_readable(d: dict) -> str:
+    """Render the extracted LogicProblem dict the way open_debug_viewer shows it:
+    UPPERCASE section headers (with a count for lists) + indented YAML bodies."""
+    order = ["entities", "constraints", "questions", "num_groups", "num_slots"]
+    keys = [k for k in order if k in d] + [k for k in d if k not in order]
+    blocks = []
+    for k in keys:
+        v = d[k]
+        if isinstance(v, list):
+            header = f"{k.upper()}  ({len(v)})"
+            if not v:
+                body = "  (none)"
+            elif all(not isinstance(x, (dict, list)) for x in v):
+                body = "\n".join(f"  - {_scalar(x)}" for x in v)          # entities etc.
+            else:
+                body = "\n\n".join("\n".join(_yaml_lines([x], 0)) for x in v)  # constraints/questions
+        elif isinstance(v, dict):
+            header = k.upper()
+            body = "\n".join(_yaml_lines(v, 2)) or "  {}"
+        else:
+            header = k.upper()
+            body = f"  {_scalar(v)}"
+        blocks.append(header + "\n" + body)
+    return "\n\n".join(blocks)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Session building (reuses repl / pipeline / explanation)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -129,7 +198,7 @@ def build_session(lp, problem_text: str, active_domains, extracted_dict: dict, s
         "problem_text": problem_text,
         "active_domains": active_domains,
         "variables": _variables_payload(ctx, lp),
-        "extracted_json": json.dumps(extracted_dict, indent=2, ensure_ascii=False),
+        "extracted_json": format_extraction_readable(extracted_dict),
         "answer": _answer_payload(lp),
     }
 
@@ -352,9 +421,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _handle_ask_stream(self):
-        """Stream one question: reasoning deltas (if SHOW_THINKING) then the answer, over SSE.
-        The answer always comes from the grammar-constrained mapping, so validity is unchanged."""
+        """Stream one question over SSE. mode=="template" uses the deterministic REPL grammar
+        (repl.parse_command, no LLM); mode=="llm" (default) uses the reasoning-streamed mapping.
+        Either way the answer comes from the same query path, so validity is unchanged."""
         data = self._read_json()
+        mode = (data.get("mode") or "llm").lower()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -368,10 +439,18 @@ class Handler(BaseHTTPRequestHandler):
                     self._sse({"error": "load a problem first"}); self._sse({"done": True}); return
                 ctx, lp = SESSION["ctx"], SESSION["lp"]
                 try:
-                    if SHOW_THINKING:
+                    if mode == "template":
+                        parsed = repl.parse_command(q, ctx, lp)      # deterministic grammar, no LLM
+                        if parsed is None:
+                            self._sse({"error": "Not a command. Use: whynot <var> <val>, "
+                                                "can <var> <val>, or forces <var>."})
+                            self._sse({"done": True}); return
+                    elif SHOW_THINKING:
                         parsed = stream_ask(q, ctx, lp, emit_thinking=lambda d: self._sse({"thinking_delta": d}))
                     else:
                         parsed = repl.parse_freetext(q, ctx, lp)
+                except ValueError as e:            # malformed structured command
+                    self._sse({"error": str(e)}); self._sse({"done": True}); return
                 except RuntimeError as e:          # Ollama unreachable / timeout
                     self._sse({"error": f"LLM error: {e}"}); self._sse({"done": True}); return
                 if parsed is repl.CANNOT_ANSWER:
@@ -383,7 +462,10 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except Exception as e:  # noqa: BLE001 — surface engine errors as a chat bubble
                     self._sse({"error": f"{type(e).__name__}: {e}"}); self._sse({"done": True}); return
-                self._sse({"interpreted": repl.format_structured(var, val, qtype), "prose": prose, "mcs": mcs})
+                payload = {"prose": prose, "mcs": mcs}
+                if mode != "template":   # in template mode the user typed the structured form already
+                    payload["interpreted"] = repl.format_structured(var, val, qtype)
+                self._sse(payload)
                 self._sse({"done": True})
         except (BrokenPipeError, ConnectionError, OSError):
             return  # client closed the stream — stop quietly

@@ -117,7 +117,7 @@
   details.json>summary{cursor:pointer;padding:9px 12px;font-size:12px;color:var(--muted);user-select:none}
   details.json>summary:hover{color:var(--fg)}
   details.json pre{margin:0;padding:0 13px 13px;font-family:var(--mono);font-size:11.5px;line-height:1.55;
-    color:#d9d5cb;overflow-x:auto;white-space:pre}
+    color:#d9d5cb;white-space:pre-wrap;overflow-wrap:anywhere}
 
   /* ---- chat column ---- */
   #transcript{flex:1;overflow:auto;padding:26px 0}
@@ -159,7 +159,13 @@
   @keyframes blink{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 
   /* ---- composer ---- */
-  #composer{border-top:1px solid var(--border);background:var(--panel);padding:14px 24px 18px}
+  #composer{border-top:1px solid var(--border);background:var(--panel);padding:12px 24px 18px}
+  #modebar{max-width:760px;margin:0 auto 9px;display:flex;align-items:center;gap:10px}
+  #modebar .mlbl{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.7px}
+  .seg{display:inline-flex;background:#1f1e1c;border:1px solid var(--border2);border-radius:10px;padding:3px;gap:3px}
+  .seg-btn{background:transparent;border:none;border-radius:7px;padding:5px 12px;font-size:12.5px;color:var(--muted)}
+  .seg-btn:hover:not(.on){background:var(--raise);color:var(--fg)}
+  .seg-btn.on{background:var(--accent);color:#2a1a12;font-weight:600}
   #cwrap{max-width:760px;margin:0 auto;display:flex;gap:10px;align-items:flex-end;
     background:#1f1e1c;border:1px solid var(--border2);border-radius:16px;padding:8px 8px 8px 6px;transition:.14s}
   #cwrap.focus{border-color:var(--accent)}
@@ -209,8 +215,8 @@
             <div class="lbl" style="margin-bottom:6px">Answer</div>
             <div id="answer" style="display:flex;flex-direction:column;gap:7px"></div>
           </div>
-          <details class="json">
-            <summary>Extracted JSON</summary>
+          <details class="json" open>
+            <summary>Extraction</summary>
             <pre class="mono" id="json"></pre>
           </details>
         </div>
@@ -227,6 +233,13 @@
         </div>
       </div>
       <div id="composer">
+        <div id="modebar">
+          <span class="mlbl">Mode</span>
+          <div class="seg" id="modeseg">
+            <button class="seg-btn on" data-mode="llm">Free-text (LLM)</button>
+            <button class="seg-btn" data-mode="template">Structured (REPL)</button>
+          </div>
+        </div>
         <div id="cwrap">
           <textarea id="input" rows="1" placeholder="Ask about the puzzle…  e.g. why can't Alice be second?" disabled></textarea>
           <button id="send" class="accent" disabled>Send</button>
@@ -243,6 +256,7 @@ const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) 
 
 let loaded = false;      // a puzzle is ready
 let busy = false;        // a request is in flight
+let askMode = "llm";     // "llm" (free-text) | "template" (structured REPL grammar)
 
 function setStatus(text, kind){ $("status-t").textContent = text; $("status").className = "status" + (kind ? " " + kind : ""); }
 function setBusy(b){ busy = b; refreshComposer(); }
@@ -381,7 +395,7 @@ async function ask(){
   if (!q || !loaded || busy) return;
   addUser(q);
   input.value = ""; autogrow();
-  setBusy(true); setStatus("thinking…","busy");
+  setBusy(true); setStatus(askMode === "template" ? "solving…" : "thinking…","busy");
 
   const node = addThinking();               // assistant msg with the dots placeholder
   const bubble = node.querySelector(".bubble");
@@ -429,7 +443,7 @@ async function ask(){
   }
 
   try{
-    const resp = await fetch("/api/ask", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({question:q})});
+    const resp = await fetch("/api/ask", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({question:q, mode:askMode})});
     const reader = resp.body.getReader(); const dec = new TextDecoder();
     let sbuf = "";
     while(true){
@@ -460,6 +474,23 @@ $("send").addEventListener("click", ask);
 $("btn-random").addEventListener("click", loadRandom);
 $("btn-extract").addEventListener("click", extractPuzzle);
 $("paste").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)){ e.preventDefault(); extractPuzzle(); } });
+
+/* mode toggle: free-text LLM <-> structured REPL grammar */
+function updateModeUI(){
+  const tmpl = askMode === "template";
+  $("input").placeholder = tmpl ? "Command:  whynot slot_Alice 2"
+                                : "Ask about the puzzle…  e.g. why can't Alice be second?";
+  $("hint").textContent = tmpl
+    ? "Structured REPL — whynot <var> <val> · can <var> <val> · forces <var>  (use the exact variable names on the left)"
+    : "Enter to send · Shift+Enter for a new line · try “can Bob be a knight?”, “what forces Carol?”";
+}
+document.querySelectorAll("#modeseg .seg-btn").forEach(b => b.addEventListener("click", () => {
+  askMode = b.dataset.mode;
+  document.querySelectorAll("#modeseg .seg-btn").forEach(x => x.classList.toggle("on", x === b));
+  updateModeUI();
+  if (loaded) $("input").focus();
+}));
+updateModeUI();
 refreshComposer();
 </script>
 </body>
