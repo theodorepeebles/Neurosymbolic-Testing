@@ -22,7 +22,7 @@ adds those *untracked*, so it can't.
 
 Standalone: pipeline.py / run.py are untouched. To exercise the engine without a database:
 
-    python explanation.py        # runs the built-in smoke test over pipeline.EXAMPLE_JSONS
+    python explanation.py        # runs the built-in smoke test over prompts.EXAMPLE_JSONS
 
 See explanation_debug.py to run it on a real run_id from sft_test.db.
 """
@@ -693,7 +693,7 @@ def explanation_to_dict(struct: ExplanationStruct) -> dict:
 
 def _smoke_test():
     import json
-    from pipeline import EXAMPLE_JSONS
+    from prompts import EXAMPLE_JSONS
     from validators import build_hybrid_schema
 
     for domains_fs, ex in EXAMPLE_JSONS.items():

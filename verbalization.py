@@ -267,7 +267,7 @@ def verbalize_struct(structs, labels: dict) -> str:
 
 def _smoke_test():
     # Local imports so the module itself stays free of explanation/pipeline at load time.
-    from pipeline import EXAMPLE_JSONS
+    from prompts import EXAMPLE_JSONS
     from validators import build_hybrid_schema
     from explanation import explain_problem, build_context
     from attribution import constraint_to_query
