@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NS Extraction · Failure Debug Viewer</title>
+<!--
+  Single-file debug viewer for NS extraction failure reports (profiles_*.json from analyze.py).
+  The launcher (open_debug_viewer.py) replaces __EMBEDDED_REPORTS__ below with an escaped JSON
+  array of every report in debug_reports/, newest-first. Opened directly (no launcher) it shows
+  an empty drag-and-drop state. No external resources — fully offline.
+
+  LAYOUT: GitHub-style debug panel.
+    · Left sidebar  = report/DB selector + filters + scrollable list of runs. Click a run to open it.
+    · Main pane     = problem text (top), auto-shown details (constraint counts etc.), then a
+                      side-by-side expected-vs-extracted comparison.
+    · Formatted/Raw = the comparison renders a readable, section-separated view by default;
+                      toggle to the pure JSON strings the model/gold actually produced.
+    · Diff          = overlays add/remove highlighting on whichever view is active.
+
+  SECURITY: all report data is untrusted model output. It is embedded inside a
+  type="application/json" block (escaped by the launcher) and read via textContent + JSON.parse.
+  Every value is rendered with textContent / createElement — never innerHTML — so no markup in
+  the data can execute.
+-->
+<style>
+  :root{
+    --bg:#0d1117; --panel:#0f1419; --panel2:#161b22; --panel3:#1c2230;
+    --border:#21262d; --border2:#30363d; --border3:#3a4452;
+    --fg:#e6edf3; --muted:#8b949e; --faint:#6e7681;
+    --accent:#4493f8; --accent-bg:#388bfd1a; --accent-bd:#1f6feb;
+    --fail:#f85149; --fail-bg:#f8514920; --pass:#3fb950; --pass-bg:#3fb95020;
+    --warn:#d29922; --warn-bg:#d2992220; --purple:#d2a8ff;
+    --del-bg:#67060c40; --del-fg:#ffb4ab; --del-bd:#f85149;
+    --add-bg:#0f5323aa; --add-fg:#9be8a8; --add-bd:#3fb950;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);
+    font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden}
+  .mono{font-family:var(--mono)}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--border3)}
+
+  button{font:inherit;color:inherit;cursor:pointer;background:var(--panel3);
+    border:1px solid var(--border2);border-radius:6px;padding:3px 9px;line-height:1.4}
+  button:hover{border-color:var(--border3)}
+  button.on{background:var(--accent-bg);border-color:var(--accent-bd);color:#cfe3ff}
+  input[type=text]{font:inherit;color:inherit;background:var(--bg);
+    border:1px solid var(--border2);border-radius:6px;padding:5px 9px;width:100%}
+  input[type=text]:focus{outline:none;border-color:var(--accent-bd)}
+
+  /* ---- header ---- */
+  header{padding:9px 16px;border-bottom:1px solid var(--border);background:var(--panel2);
+    display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:13px;font-weight:600;letter-spacing:.2px;white-space:nowrap}
+  header h1 .dot{color:var(--accent)}
+  header .sub{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---- shell: sidebar + main ---- */
+  #shell{flex:1;display:flex;min-height:0}
+  #sidebar{width:300px;min-width:300px;border-right:1px solid var(--border);
+    background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  #main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;overflow:auto}
+  #side2{width:360px;min-width:360px;border-left:1px solid var(--border);
+    background:var(--panel);overflow:auto;min-height:0}
+  #meta{padding:16px 16px 28px}
+
+  /* ---- sidebar: report tabs ---- */
+  #reps{display:flex;flex-direction:column;border-bottom:1px solid var(--border);
+    flex-shrink:0;max-height:16vh;overflow-y:auto}
+  .rep{display:flex;flex-direction:column;gap:0;padding:4px 14px;border:none;border-radius:0;
+    background:transparent;text-align:left;border-left:3px solid transparent}
+  .rep:hover{background:var(--panel2)}
+  .rep.active{background:var(--panel2);border-left-color:var(--accent)}
+  .rep .r1{font-weight:600;font-size:12px;color:var(--fg)}
+  .rep.db .r1{color:var(--purple)}
+  .rep .r2{font-size:11px;color:var(--muted)}
+
+  /* ---- sidebar: summary stats ---- */
+  #summary{padding:8px 14px;border-bottom:1px solid var(--border);
+    display:flex;flex-direction:column;gap:6px}
+  #summary .flbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  .sumgroup{display:flex;flex-direction:column;gap:2px}
+  .sumrow{display:flex;align-items:center;gap:8px;font-size:12px;padding:1px 0}
+  .sumrow .dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+  .sumrow .dot.ok{background:var(--pass)}
+  .sumrow .dot.warn{background:var(--warn)}
+  .sumrow .dot.bad{background:var(--fail)}
+  .sumrow .lbl{flex:1;min-width:0;color:var(--fg)}
+  .sumrow.mism .lbl{color:var(--muted)}
+  .sumrow .n{font-family:var(--mono);font-weight:600;color:var(--fg)}
+  .sumrow.mism .n{color:var(--muted)}
+  .sumrow.mism .n.hot{color:var(--fail)}
+
+  /* ---- sidebar: filters ---- */
+  #filters{padding:8px 14px;border-bottom:1px solid var(--border);
+    display:flex;flex-direction:column;gap:7px}
+  .frow{display:flex;flex-direction:column;gap:5px}
+  .flbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-size:11px;padding:2px 8px;border-radius:20px}
+  .chip .pf{color:var(--fail);font-weight:600}
+  .chip.dom{border-radius:6px;display:inline-flex;align-items:center;gap:6px}
+
+  /* ---- sidebar: run list ---- */
+  #runwrap{flex:1;min-height:0;display:flex;flex-direction:column}
+  #runhead{display:flex;align-items:center;justify-content:space-between;
+    padding:7px 14px;color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  #runlist{flex:1;overflow:auto;padding:0 8px 10px}
+  .run{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;
+    border:1px solid transparent}
+  .run:hover{background:var(--panel2)}
+  .run.active{background:var(--accent-bg);border-color:var(--accent-bd)}
+  .run .rid{font-family:var(--mono);font-size:12px;color:var(--fg);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .run .doms{display:flex;gap:3px;flex-shrink:0}
+  .dotdom{width:7px;height:7px;border-radius:50%}
+  .dotdom.grouping{background:#a371f7}
+  .dotdom.knights_and_knaves{background:#e3b341}
+  .dotdom.ordering{background:#56d4dd}
+
+  /* ---- badges ---- */
+  .badge{font-size:10px;padding:1px 7px;border-radius:20px;font-weight:600;flex-shrink:0;
+    letter-spacing:.3px}
+  .run .badge{min-width:76px;text-align:center}
+  .badge.fail{background:var(--fail-bg);color:var(--fail)}
+  .badge.pass{background:var(--pass-bg);color:var(--pass)}
+  .badge.semi{background:var(--warn-bg);color:var(--warn)}
+  .badge.na{background:var(--panel3);color:var(--muted)}
+  .tag{font-size:11px;padding:1px 8px;border-radius:20px;background:var(--panel3);
+    border:1px solid var(--border2);color:var(--muted)}
+  .tag.good{color:var(--pass);border-color:#2a5e3a}
+  .tag.bad{color:var(--fail);border-color:#5e2a2a}
+  .tag.warn{color:var(--warn);border-color:#5e4a1a}
+
+  /* ---- main: empty state ---- */
+  .empty{color:var(--muted);text-align:center;margin:18vh auto 0;font-size:14px;max-width:460px}
+  .empty b{color:var(--fg)}
+
+  /* ---- main: problem + details + compare ---- */
+  #detail{padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+  .sec-h{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);
+    margin:0 0 6px;display:flex;align-items:center;gap:8px}
+  .card{background:var(--panel2);border:1px solid var(--border);border-radius:8px}
+
+  .problem{white-space:pre-wrap;font-family:var(--mono);font-size:12.5px;line-height:1.55;
+    color:#c9d1d9;padding:12px 14px}
+
+  /* failure-profile card (right panel) */
+  .profcard{padding:10px 12px;margin-bottom:8px}
+  .proftitle{font-weight:600;color:var(--fg);font-size:12.5px;margin-bottom:6px}
+  .profline{display:flex;gap:8px;font-size:12px;margin-top:3px}
+  .profline .pk{color:var(--faint);flex:0 0 76px}
+  .profline .pv{color:var(--fg)}
+  .profline .pv.rate{color:var(--fail);font-weight:600}
+  .profline .pv.cond{font-family:var(--mono);font-size:11.5px;color:#c9d1d9;overflow-wrap:anywhere}
+
+  /* facts strip */
+  .facts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+  /* constraint type counts */
+  .ctc{display:flex;flex-wrap:wrap;gap:6px}
+  .ctc .c{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:6px;
+    background:var(--panel3);border:1px solid var(--border2)}
+  .ctc .c b{color:var(--accent);font-weight:600;margin-left:5px}
+
+  /* counts comparison table */
+  table.cmp{border-collapse:collapse;width:100%;font-size:12px}
+  table.cmp th{text-align:left;color:var(--faint);font-weight:500;font-size:10px;
+    text-transform:uppercase;letter-spacing:.6px;padding:4px 10px;border-bottom:1px solid var(--border)}
+  table.cmp td{padding:3px 10px;border-bottom:1px solid var(--border);font-family:var(--mono)}
+  table.cmp td.metric{font-family:inherit;color:var(--muted)}
+  table.cmp td.num{text-align:right;width:70px}
+  table.cmp tr.diff td{background:var(--warn-bg)}
+  table.cmp tr.diff td.num.exp{color:var(--del-fg)}
+  table.cmp tr.diff td.num.act{color:var(--add-fg)}
+  table.cmp tr.diff td.metric{color:var(--warn)}
+  .cmp-wrap{overflow:hidden}
+
+  /* misc key/values */
+  .kvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 18px;
+    padding:10px 14px}
+  .kv{display:flex;gap:8px;font-size:12px;padding:2px 0;min-width:0}
+  .kv .k{color:var(--muted);flex:0 0 auto}
+  .kv .v{color:var(--fg);font-family:var(--mono);overflow-wrap:anywhere;min-width:0}
+
+  .trace{white-space:pre-wrap;font-family:var(--mono);font-size:11.5px;color:var(--del-fg);
+    background:var(--del-bg);border:1px solid var(--del-bd);border-radius:8px;padding:10px 12px;
+    max-height:220px;overflow:auto}
+
+  /* compare toolbar */
+  .cmp-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .toggle{display:flex;gap:0;border:1px solid var(--border2);border-radius:6px;overflow:hidden}
+  .toggle button{border:none;border-radius:0;background:var(--panel2)}
+  .toggle button + button{border-left:1px solid var(--border2)}
+  .toggle button.on{background:var(--accent-bg);color:#cfe3ff}
+  .toolbar-lbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  .legend{display:flex;gap:10px;font-size:11px;color:var(--muted);margin-left:auto}
+  .legend .k{padding:0 6px;border-radius:3px;font-family:var(--mono)}
+  .legend .kd{background:var(--del-bg);color:var(--del-fg)}
+  .legend .ka{background:var(--add-bg);color:var(--add-fg)}
+
+  /* side-by-side panes */
+  .sxs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .pane{border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .pane .ph{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--panel2);
+    border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+  .pane .ph .who{font-weight:600;color:var(--fg)}
+  .pane.exp .ph .who{color:#ffb4ab}
+  .pane.act .ph .who{color:#9be8a8}
+  .code{font-family:var(--mono);font-size:12px;line-height:1.5;background:var(--bg);tab-size:2}
+  .ln{white-space:pre-wrap;word-break:break-word;padding:0 12px;border-left:3px solid transparent}
+  .ln.sec{color:var(--accent);font-weight:600;margin-top:2px}
+  .ln.del{background:var(--del-bg);color:var(--del-fg);border-left-color:var(--del-bd)}
+  .ln.add{background:var(--add-bg);color:var(--add-fg);border-left-color:var(--add-bd)}
+  .ln.bad{color:var(--warn)}
+
+  .dragover{outline:2px dashed var(--accent);outline-offset:-6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>NS Extraction <span class="dot">·</span> Failure Debug Viewer</h1>
+  <div class="sub" id="subhead">Drag any profiles_*.json onto the window to load it.</div>
+</header>
+
+<div id="shell">
+  <aside id="sidebar">
+    <div id="reps"></div>
+    <div id="summary"></div>
+    <div id="filters"></div>
+    <div id="runwrap">
+      <div id="runhead"><span>Runs</span><span id="runcount"></span></div>
+      <div id="runlist"></div>
+    </div>
+  </aside>
+  <div id="main">
+    <div id="detail"><div class="empty">No reports loaded.<br><b>Drag a profiles_*.json file here</b>
+      (or launch via <code>open_debug_viewer.py</code>).</div></div>
+  </div>
+  <aside id="side2"><div id="meta"></div></aside>
+</div>
+
+<script type="application/json" id="embedded-reports">__EMBEDDED_REPORTS__</script>
+<script>
+"use strict";
+
+// ---- constants -------------------------------------------------------------
+const DB_KEY = "__DB__";
+const MAX_DROP_BYTES = 80 * 1024 * 1024;
+// Columns surfaced explicitly elsewhere → excluded from the generic "misc" grid.
+const FACT_COLS = new Set(["answer_correct","z3_result","schema_valid","ground_truth_answer",
+  "extraction_model_name","active_domains"]);
+const HIDDEN_COLS = new Set(["id","run_id","problem_text","extracted_json","expected_json",
+  "constraint_type_counts","error_traceback"]);
+
+// ---- state -----------------------------------------------------------------
+let reports = [];                 // [{filename, generated_at, domains, columns, rows, profiles, _rowsById}]
+let activeKey = null;             // report filename or DB_KEY
+const viewState = new Map();      // key -> {domains:Set, search, profiles:Set, run}
+const ui = { formatted:true, diff:true };  // global comparison view prefs
+
+// ---- helpers ---------------------------------------------------------------
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function setsEqual(a, b){
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+function fmtDate(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return iso || "unknown time";
+  return d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+function sortReports(){ reports.sort((a,b)=>new Date(b.generated_at)-new Date(a.generated_at)); }
+function indexReport(r){
+  r._rowsById = new Map();
+  for (const row of (r.rows||[])) r._rowsById.set(row.id, row);
+  return r;
+}
+function validReport(o){
+  return o && o.kind==="ns_failure_report" && Array.isArray(o.rows)
+      && Array.isArray(o.profiles) && Array.isArray(o.columns);
+}
+function stateFor(key){
+  if (!viewState.has(key)) viewState.set(key,{domains:new Set(),search:"",profiles:new Set(),run:null});
+  return viewState.get(key);
+}
+function parseMaybe(s){ try { return JSON.parse(s); } catch(e){ return undefined; } }
+
+// ---- line diff (LCS) -------------------------------------------------------
+// a = expected, b = actual. 'del' = expected-only (red); 'add' = actual-only (green).
+function lineDiff(aLines, bLines){
+  const n=aLines.length, m=bLines.length, dp=[];
+  for (let i=0;i<=n;i++) dp.push(new Int32Array(m+1));
+  for (let i=n-1;i>=0;i--)
+    for (let j=m-1;j>=0;j--)
+      dp[i][j] = aLines[i]===bLines[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const out=[]; let i=0,j=0;
+  while (i<n && j<m){
+    if (aLines[i]===bLines[j]){ out.push(["common",aLines[i]]); i++; j++; }
+    else if (dp[i+1][j] >= dp[i][j+1]){ out.push(["del",aLines[i]]); i++; }
+    else { out.push(["add",bLines[j]]); j++; }
+  }
+  while (i<n){ out.push(["del",aLines[i]]); i++; }
+  while (j<m){ out.push(["add",bLines[j]]); j++; }
+  return out;
+}
+
+// ---- pretty formatting -----------------------------------------------------
+// Render a parsed NS-extraction object into readable, section-separated lines.
+// Top-level keys become uppercase headers; constraint list items are blank-line
+// separated; nested values render YAML-ish so structure stays obvious.
+function pad(n){ return "  ".repeat(n); }
+function isScalar(v){ return v===null || typeof v!=="object"; }
+function scalarStr(v){ return v===null ? "null" : (typeof v==="boolean" ? String(v) : String(v)); }
+
+function yamlKV(obj, indent){
+  const out=[];
+  for (const k of Object.keys(obj)){
+    const v = obj[k];
+    if (isScalar(v)){
+      out.push(pad(indent)+k+": "+scalarStr(v));
+    } else if (Array.isArray(v) && v.every(isScalar)){
+      if (!v.length) out.push(pad(indent)+k+": []");
+      else { out.push(pad(indent)+k+":"); v.forEach(x=>out.push(pad(indent+1)+"- "+scalarStr(x))); }
+    } else if (Array.isArray(v)){
+      if (!v.length){ out.push(pad(indent)+k+": []"); continue; }
+      out.push(pad(indent)+k+":");
+      v.forEach(item=>{
+        if (isScalar(item)){ out.push(pad(indent+1)+"- "+scalarStr(item)); return; }
+        const sub = yamlKV(item, indent+2);
+        if (sub.length) sub[0] = pad(indent+1)+"- "+sub[0].slice(pad(indent+2).length);
+        out.push(...sub);
+      });
+    } else {
+      out.push(pad(indent)+k+":");
+      out.push(...yamlKV(v, indent+1));
+    }
+  }
+  return out;
+}
+
+// Returns {lines:[...], sections:Set<lineIndex>} so headers can be styled.
+function formatObject(obj){
+  const lines=[], sections=new Set();
+  if (isScalar(obj) || Array.isArray(obj)){
+    // Not the expected top-level shape — fall back to plain YAML-ish.
+    return { lines: yamlKV({value:obj},0), sections };
+  }
+  const keys = Object.keys(obj);
+  keys.forEach((k, ki)=>{
+    const v = obj[k];
+    let header = k.toUpperCase();
+    if (Array.isArray(v)) header += "  ("+v.length+")";
+    sections.add(lines.length); lines.push(header);
+
+    if (isScalar(v)){
+      lines.push(pad(1)+scalarStr(v));
+    } else if (Array.isArray(v) && v.every(isScalar)){
+      if (!v.length) lines.push(pad(1)+"(none)");
+      else v.forEach(x=>lines.push(pad(1)+"- "+scalarStr(x)));
+    } else if (Array.isArray(v)){
+      if (!v.length) lines.push(pad(1)+"(none)");
+      else v.forEach((item, idx)=>{
+        if (idx>0) lines.push("");                 // blank line between items
+        if (isScalar(item)){ lines.push(pad(1)+"- "+scalarStr(item)); return; }
+        const sub = yamlKV(item, 1);
+        if (sub.length) sub[0] = "- "+sub[0].slice(pad(1).length);
+        lines.push(...sub);
+      });
+    } else {
+      lines.push(...yamlKV(v, 1));
+    }
+    if (ki < keys.length-1) lines.push("");        // blank line between sections
+  });
+  return { lines, sections };
+}
+
+// Build the {lines, sections} for one side given the current Formatted/Raw mode.
+function sideLines(jsonStr){
+  if (jsonStr == null) return { lines:["(null)"], sections:new Set(), ok:false };
+  if (ui.formatted){
+    const obj = parseMaybe(jsonStr);
+    if (obj === undefined)
+      return { lines:["⚠ unparseable JSON — showing raw", ""].concat(jsonStr.split("\n")),
+               sections:new Set([0]), ok:false };
+    const f = formatObject(obj);
+    return { lines:f.lines, sections:f.sections, ok:true };
+  }
+  // Raw: the exact string the model / gold produced.
+  return { lines:jsonStr.split("\n"), sections:new Set(), ok:true };
+}
+
+// ---- sidebar: report list --------------------------------------------------
+function renderReps(){
+  const box = document.getElementById("reps");
+  box.textContent = "";
+  reports.forEach(r=>{
+    const b = el("button","rep"+(activeKey===r.filename?" active":""));
+    b.appendChild(el("span","r1", fmtDate(r.generated_at)));
+    const np=(r.profiles||[]).length;
+    b.appendChild(el("span","r2", `${(r.rows||[]).length} rows · ${np} profile${np===1?"":"s"}`));
+    b.onclick = ()=>{ activeKey=r.filename; render(); };
+    box.appendChild(b);
+  });
+  if (reports.length){
+    const b = el("button","rep db"+(activeKey===DB_KEY?" active":""));
+    const dbFilter = reports[0].db_model_filter;
+    b.appendChild(el("span","r1","Whole DB"));
+    b.appendChild(el("span","r2",
+      `${reports[0].rows.length} rows · ${dbFilter && dbFilter.length ? dbFilter.join(", ") : "all models"}`));
+    b.onclick = ()=>{ activeKey=DB_KEY; render(); };
+    box.appendChild(b);
+  }
+}
+
+function activeReport(){
+  if (activeKey===DB_KEY) return reports[0]||null;
+  return reports.find(r=>r.filename===activeKey)||null;
+}
+
+// Rows for the current tab before domain/search filtering.
+function baseRows(rep, st){
+  if (activeKey===DB_KEY) return rep.rows.slice();
+  const sel = st.profiles;
+  const chosen = (rep.profiles||[]).filter(p=>sel.size===0 || sel.has(p.index));
+  const ids = new Set();
+  chosen.forEach(p=>(p.row_ids||[]).forEach(id=>ids.add(id)));
+  const out=[];
+  ids.forEach(id=>{ const row=rep._rowsById.get(id); if (row) out.push(row); });
+  return out;
+}
+function applyFilters(rows, st){
+  const dom=st.domains, q=st.search.trim().toLowerCase();
+  return rows.filter(row=>{
+    if (dom.size){ if (!setsEqual(new Set(row.active_domains||[]), dom)) return false; }
+    if (q){ if (!String(row.run_id||"").toLowerCase().includes(q)) return false; }
+    return true;
+  });
+}
+function currentRows(rep, st){ return applyFilters(baseRows(rep, st), st); }
+
+// ---- sidebar: filters ------------------------------------------------------
+function renderFilters(rep, st){
+  const c = document.getElementById("filters");
+  c.textContent = "";
+
+  if (activeKey!==DB_KEY && (rep.profiles||[]).length){
+    const row = el("div","frow");
+    row.appendChild(el("div","flbl","Profiles"));
+    const chips = el("div","chips");
+    rep.profiles.forEach(p=>{
+      const b = el("button","chip"+(st.profiles.has(p.index)?" on":""));
+      b.appendChild(el("span",null,`#${p.index} `));
+      b.appendChild(el("span","pf",(p.failure_rate*100).toFixed(0)+"%"));
+      b.appendChild(el("span",null,` (${p.sample_count})`));
+      b.title = p.condition_text;
+      b.onclick = ()=>{ st.profiles.has(p.index)?st.profiles.delete(p.index):st.profiles.add(p.index);
+                        st.run=null; renderFilters(rep,st); renderRunList(rep,st); };
+      chips.appendChild(b);
+    });
+    row.appendChild(chips); c.appendChild(row);
+  }
+
+  const r2 = el("div","frow");
+  r2.appendChild(el("div","flbl","Domains (exact combo)"));
+  const dchips = el("div","chips");
+  (rep.domains||[]).forEach(d=>{
+    const b = el("button","chip dom"+(st.domains.has(d)?" on":""));
+    b.appendChild(el("span","dotdom "+d));   // same color the run list uses for this domain
+    b.appendChild(el("span",null, d));
+    b.onclick = ()=>{ st.domains.has(d)?st.domains.delete(d):st.domains.add(d);
+                      st.run=null; renderFilters(rep,st); renderRunList(rep,st); };
+    dchips.appendChild(b);
+  });
+  r2.appendChild(dchips); c.appendChild(r2);
+
+  const r3 = el("div","frow");
+  r3.appendChild(el("div","flbl","Run ID"));
+  const inp = el("input"); inp.type="text"; inp.placeholder="search run_id…"; inp.value=st.search;
+  inp.oninput = ()=>{ st.search=inp.value; st.run=null; renderRunList(rep,st); };
+  r3.appendChild(inp); c.appendChild(r3);
+}
+
+// ---- match / mismatch predicates (mirror the exact_*_match cols analyze.py logs) ---
+// Flags are 0 (mismatch) / 1 (match); treat null/undefined as "not a mismatch".
+function isMismatch(v){ return v === 0; }
+function numOrNull(v){ return (v===null||v===undefined) ? null : Number(v); }
+// Domain axiom = num_slots / num_groups. null both → N/A (match); otherwise differ → mismatch.
+function countDiff(a, b){ a=numOrNull(a); b=numOrNull(b); if (a===null && b===null) return false; return a!==b; }
+function axiomMismatch(row){
+  return countDiff(row.expected_slot_count, row.extracted_slot_count)
+      || countDiff(row.expected_group_count, row.extracted_group_count);
+}
+// "Same extracted JSON" = no detected mismatch in any tracked dimension (order-independent).
+function sameExtraction(row){
+  return !isMismatch(row.exact_entity_match)
+      && !isMismatch(row.exact_global_constraint_match)
+      && !isMismatch(row.exact_question_constraint_match)
+      && !isMismatch(row.exact_choice_constraint_match)
+      && !axiomMismatch(row);
+}
+// Three-way outcome shared by the run-list badge and the Outcomes summary.
+function outcome(row){
+  if (row.answer_correct===1)
+    return sameExtraction(row) ? {cls:"pass",label:"CORRECT"} : {cls:"semi",label:"SEMI"};
+  if (row.answer_correct===0) return {cls:"fail",label:"INCORRECT"};
+  return {cls:"na",label:"—"};
+}
+
+// ---- sidebar: summary stats ------------------------------------------------
+function renderSummary(rows){
+  const box = document.getElementById("summary");
+  box.textContent = "";
+  if (!rows || !rows.length){ box.style.display = "none"; return; }
+  box.style.display = "";
+
+  let correctSame=0, correctDiff=0, incorrect=0;
+  let mEntity=0, mGlobal=0, mQuestion=0, mChoice=0, mAxiom=0;
+  rows.forEach(r=>{
+    if (r.answer_correct===1){ sameExtraction(r) ? correctSame++ : correctDiff++; }
+    else if (r.answer_correct===0) incorrect++;
+    if (isMismatch(r.exact_entity_match)) mEntity++;
+    if (isMismatch(r.exact_global_constraint_match)) mGlobal++;
+    if (isMismatch(r.exact_question_constraint_match)) mQuestion++;
+    if (isMismatch(r.exact_choice_constraint_match)) mChoice++;
+    if (axiomMismatch(r)) mAxiom++;
+  });
+
+  box.appendChild(el("div","flbl", `Outcomes · ${rows.length} runs`));
+  const og = el("div","sumgroup");
+  og.appendChild(sumRow("ok","correct · exact extraction", correctSame));
+  og.appendChild(sumRow("warn","correct · different extraction", correctDiff));
+  og.appendChild(sumRow("bad","incorrect", incorrect));
+  box.appendChild(og);
+
+  box.appendChild(el("div","flbl","Mismatches (rows affected)"));
+  const mg = el("div","sumgroup");
+  mg.appendChild(mismRow("entity", mEntity));
+  mg.appendChild(mismRow("problem constraints", mGlobal));
+  mg.appendChild(mismRow("question constraints", mQuestion));
+  mg.appendChild(mismRow("answer-choice constraints", mChoice));
+  mg.appendChild(mismRow("domain axioms (slots/groups)", mAxiom));
+  box.appendChild(mg);
+}
+function sumRow(dot, label, n){
+  const r = el("div","sumrow");
+  r.appendChild(el("span","dot "+dot));
+  r.appendChild(el("span","lbl", label));
+  r.appendChild(el("span","n", String(n)));
+  return r;
+}
+function mismRow(label, n){
+  const r = el("div","sumrow mism");
+  r.appendChild(el("span","lbl", label));
+  r.appendChild(el("span","n"+(n>0?" hot":""), String(n)));
+  return r;
+}
+
+// ---- sidebar: run list -----------------------------------------------------
+function renderRunList(rep, st){
+  const rows = currentRows(rep, st);
+  renderSummary(rows);
+  const cnt = document.getElementById("runcount");
+  if (cnt) cnt.textContent = `${rows.length}`;
+
+  // keep selection valid; default to the first run so the main pane is never blank
+  const ids = new Set(rows.map(r=>r.run_id));
+  if (st.run==null || !ids.has(st.run)) st.run = rows.length ? rows[0].run_id : null;
+
+  const list = document.getElementById("runlist");
+  list.textContent = "";
+  if (!rows.length){ list.appendChild(el("div","empty","No runs match the filters.")); renderDetail(rep,st); return; }
+
+  const CAP = 1000;
+  rows.slice(0,CAP).forEach(row=>{
+    const item = el("div","run"+(row.run_id===st.run?" active":""));
+    const oc = outcome(row);   // green/yellow/red, lined up with the Outcomes panel
+    item.appendChild(el("span","badge "+oc.cls, oc.label));
+    item.appendChild(el("span","rid", String(row.run_id||"").slice(0,16)));
+    const doms = el("span","doms");
+    (row.active_domains||[]).forEach(d=>{ const dd=el("span","dotdom "+d); dd.title=d; doms.appendChild(dd); });
+    item.appendChild(doms);
+    item.title = String(row.run_id||"");
+    item.onclick = ()=>{
+      st.run = row.run_id;
+      list.querySelectorAll(".run.active").forEach(x=>x.classList.remove("active"));
+      item.classList.add("active");
+      renderDetail(rep, st);
+    };
+    list.appendChild(item);
+  });
+  if (rows.length>CAP) list.appendChild(el("div","empty",`Showing first ${CAP} of ${rows.length} — narrow filters.`));
+  renderDetail(rep, st);
+}
+
+// ---- main: detail for selected run -----------------------------------------
+function renderDetail(rep, st){
+  const root = document.getElementById("detail");
+  const meta = document.getElementById("meta");
+  root.textContent = ""; meta.textContent = "";
+  const row = st.run!=null ? rep.rows.find(r=>r.run_id===st.run) : null;
+  if (!row){ root.appendChild(el("div","empty","Select a run from the left to inspect it.")); return; }
+
+  // MIDDLE (largest): problem text + side-by-side comparison
+  if (row.problem_text){
+    const wrap = el("div");
+    wrap.appendChild(sectionHead("Problem", `run ${String(row.run_id||"")}`));
+    const card = el("div","card");
+    card.appendChild(el("div","problem", row.problem_text));
+    wrap.appendChild(card);
+    root.appendChild(wrap);
+  }
+  root.appendChild(buildCompare(row));
+
+  // RIGHT: details (auto-shown) — facts, constraint counts, expected vs extracted
+  meta.appendChild(buildDetails(rep, row));
+}
+
+function sectionHead(label, right){
+  const h = el("div","sec-h");
+  h.appendChild(el("span",null,label));
+  if (right) h.appendChild(el("span",null,right)).style.color="var(--faint)";
+  return h;
+}
+
+// Which failure profiles include this row (matched by DB id, as analyze.py records them).
+function profilesForRow(rep, row){
+  return (rep.profiles||[]).filter(p => Array.isArray(p.row_ids) && p.row_ids.includes(row.id));
+}
+
+function buildDetails(rep, row){
+  const wrap = el("div");
+
+  // failure profile(s) this run falls into — mirrors analyze.py's printed report
+  const profs = profilesForRow(rep, row);
+  if (profs.length){
+    wrap.appendChild(sectionHead("Failure profile"+(profs.length>1?"s":"")));
+    profs.forEach(p=>{
+      const card = el("div","card profcard");
+      card.appendChild(el("div","proftitle","Profile #"+p.index));
+      const m = el("div","profline");
+      m.appendChild(el("span","pk","Trap Metric"));
+      m.appendChild(el("span","pv rate",
+        (p.failure_rate*100).toFixed(1)+"% failure rate over "+p.sample_count+" validation runs"));
+      card.appendChild(m);
+      const cnd = el("div","profline");
+      cnd.appendChild(el("span","pk","Condition"));
+      cnd.appendChild(el("span","pv cond", p.condition_text));
+      card.appendChild(cnd);
+      wrap.appendChild(card);
+    });
+    wrap.appendChild(spacer());
+  }
+
+  wrap.appendChild(sectionHead("Details"));
+
+  // facts strip
+  const facts = el("div","facts");
+  const ac = row.answer_correct;
+  facts.appendChild(el("span","badge "+(ac===1?"pass":ac===0?"fail":"na"),
+    ac===1?"ANSWER CORRECT":ac===0?"ANSWER WRONG":"NO ANSWER"));
+  if (row.z3_result!=null){
+    const ok = String(row.z3_result).toUpperCase()==="SAT";
+    facts.appendChild(el("span","tag "+(ok?"good":"bad"), "z3: "+row.z3_result));
+  }
+  if (row.schema_valid!=null){
+    const ok = row.schema_valid===1 || row.schema_valid===true;
+    facts.appendChild(el("span","tag "+(ok?"good":"bad"), "schema "+(ok?"valid":"invalid")));
+  }
+  if (row.ground_truth_answer!=null && row.ground_truth_answer!=="")
+    facts.appendChild(el("span","tag","truth: "+row.ground_truth_answer));
+  if (row.extraction_model_name) facts.appendChild(el("span","tag", row.extraction_model_name));
+  wrap.appendChild(facts);
+
+  // active domains as a single line
+  const doms = row.active_domains||[];
+  if (doms.length){
+    const dl = el("div","kv"); dl.style.marginTop="8px";
+    dl.appendChild(el("span","k","active domains"));
+    dl.appendChild(el("span","v", doms.join(", ")));
+    wrap.appendChild(dl);
+  }
+
+  // constraint_type_counts chips
+  const ctc = parseMaybe(row.constraint_type_counts);
+  if (ctc && typeof ctc==="object" && Object.keys(ctc).length){
+    wrap.appendChild(spacer());
+    wrap.appendChild(el("div","flbl","Constraint type counts (extracted)")).style.marginBottom="4px";
+    const box = el("div","ctc");
+    Object.keys(ctc).forEach(k=>{
+      const c = el("span","c", k);
+      c.appendChild(el("b",null, String(ctc[k])));
+      box.appendChild(c);
+    });
+    wrap.appendChild(box);
+  }
+
+  // expected vs extracted count comparison
+  const cmpRows = pairedCounts(rep, row);
+  if (cmpRows.length){
+    wrap.appendChild(spacer());
+    wrap.appendChild(el("div","flbl","Expected vs extracted counts")).style.marginBottom="4px";
+    const cw = el("div","card cmp-wrap");
+    const t = el("table","cmp");
+    const thead = el("tr");
+    ["metric","expected","extracted"].forEach((h,i)=>{
+      const th=el("th",null,h); if (i>0) th.style.textAlign="right"; thead.appendChild(th);
+    });
+    t.appendChild(thead);
+    cmpRows.forEach(({label,exp,act})=>{
+      const tr = el("tr", exp!==act ? "diff":"");
+      tr.appendChild(el("td","metric",label));
+      tr.appendChild(el("td","num exp", String(exp)));
+      tr.appendChild(el("td","num act", String(act)));
+      t.appendChild(tr);
+    });
+    cw.appendChild(t); wrap.appendChild(cw);
+  }
+
+  // misc scalar columns
+  const grid = el("div","card kvgrid");
+  let any=false;
+  (rep.columns||Object.keys(row)).forEach(col=>{
+    if (HIDDEN_COLS.has(col) || FACT_COLS.has(col)) return;
+    if (/^(expected|extracted)_/.test(col)) return;   // shown in the comparison table
+    if (!(col in row)) return;
+    let v = row[col];
+    if (v===null || v===undefined || v==="") v="—";
+    else if (typeof v==="object") v=JSON.stringify(v);
+    const kv = el("div","kv");
+    kv.appendChild(el("span","k", col));
+    kv.appendChild(el("span","v", String(v)));
+    grid.appendChild(kv); any=true;
+  });
+  if (any){ wrap.appendChild(spacer()); wrap.appendChild(grid); }
+
+  // error traceback
+  if (row.error_traceback){
+    wrap.appendChild(spacer());
+    wrap.appendChild(el("div","flbl","Error traceback")).style.marginBottom="4px";
+    wrap.appendChild(el("div","trace", String(row.error_traceback)));
+  }
+  return wrap;
+}
+function spacer(){ const s=el("div"); s.style.height="10px"; return s; }
+
+// Pair expected_X / extracted_X columns into comparison rows.
+function pairedCounts(rep, row){
+  const cols = rep.columns || Object.keys(row);
+  const out = [];
+  cols.forEach(col=>{
+    if (!col.startsWith("expected_")) return;
+    const rest = col.slice("expected_".length);
+    if (rest === "json") return;                       // the big JSON strings live in the panes
+    const actCol = "extracted_"+rest;
+    if (!(actCol in row)) return;
+    const exp = row[col], act = row[actCol];
+    if (exp==null && act==null) return;
+    let label = rest.replace(/_count$/,"").replace(/_/g," ");
+    out.push({ label, exp: exp==null?"—":exp, act: act==null?"—":act });
+  });
+  return out;
+}
+
+// ---- main: side-by-side compare --------------------------------------------
+function buildCompare(row){
+  const wrap = el("div");
+
+  // toolbar
+  const bar = el("div","cmp-toolbar");
+  bar.appendChild(el("span","toolbar-lbl","Expected vs Extracted"));
+
+  const fmtTog = el("div","toggle");
+  const bFmt = el("button", ui.formatted?"on":"", "Formatted");
+  const bRaw = el("button", ui.formatted?"":"on", "Raw JSON");
+  fmtTog.appendChild(bFmt); fmtTog.appendChild(bRaw);
+  bar.appendChild(fmtTog);
+
+  const diffTog = el("div","toggle");
+  const bDoff = el("button", ui.diff?"":"on", "Plain");
+  const bDon  = el("button", ui.diff?"on":"", "Diff");
+  diffTog.appendChild(bDoff); diffTog.appendChild(bDon);
+  bar.appendChild(diffTog);
+
+  if (ui.diff){
+    const legend = el("div","legend");
+    legend.appendChild(el("span","k kd","− expected only"));
+    legend.appendChild(el("span","k ka","+ actual only"));
+    bar.appendChild(legend);
+  }
+  wrap.appendChild(bar);
+
+  bFmt.onclick = ()=>{ if (!ui.formatted){ ui.formatted=true; rerenderCompare(row, wrap); } };
+  bRaw.onclick = ()=>{ if (ui.formatted){ ui.formatted=false; rerenderCompare(row, wrap); } };
+  bDoff.onclick= ()=>{ if (ui.diff){ ui.diff=false; rerenderCompare(row, wrap); } };
+  bDon.onclick = ()=>{ if (!ui.diff){ ui.diff=true; rerenderCompare(row, wrap); } };
+
+  const panes = el("div");
+  panes.appendChild(buildPanes(row));
+  wrap.appendChild(panes);
+  wrap._panes = panes;
+  return wrap;
+}
+function rerenderCompare(row, wrap){
+  // rebuild the whole compare block in place (cheap, keeps toggle state in sync)
+  const fresh = buildCompare(row);
+  wrap.replaceWith(fresh);
+}
+
+function buildPanes(row){
+  const exp = sideLines(row.expected_json);
+  const act = sideLines(row.extracted_json);
+  const g = el("div","sxs");
+
+  if (!ui.diff){
+    g.appendChild(makePane("exp","expected","gold", exp.lines, exp.sections, null, exp.ok));
+    g.appendChild(makePane("act","extracted","model", act.lines, act.sections, null, act.ok));
+    return g;
+  }
+
+  // Diff highlighting: one LCS over both sides; each pane shows its own lines,
+  // with its unique lines marked (expected→del/red, actual→add/green).
+  const parts = lineDiff(exp.lines, act.lines);
+  const left=[], leftMark=[], right=[], rightMark=[];
+  parts.forEach(([type,text])=>{
+    if (type==="common"){ left.push(text); leftMark.push(""); right.push(text); rightMark.push(""); }
+    else if (type==="del"){ left.push(text); leftMark.push("del"); }
+    else { right.push(text); rightMark.push("add"); }
+  });
+  g.appendChild(makePane("exp","expected","gold", left, exp.sections, leftMark, exp.ok));
+  g.appendChild(makePane("act","extracted","model", right, act.sections, rightMark, act.ok));
+  return g;
+}
+
+function makePane(cls, who, sub, lines, sections, marks, ok){
+  const pane = el("div","pane "+cls);
+  const ph = el("div","ph");
+  ph.appendChild(el("span","who", who));
+  ph.appendChild(el("span",null, "("+sub+")"));
+  pane.appendChild(ph);
+  const code = el("div","code");
+  // In diff mode `sections` indexes refer to the un-split formatted lines, so we
+  // only style section headers in plain mode (where line indexes line up 1:1).
+  const styleSections = !marks;
+  lines.forEach((text, i)=>{
+    let c = "ln";
+    if (marks && marks[i]) c += " "+marks[i];
+    else if (styleSections && sections.has(i)) c += " sec";
+    if (!ok && i===0) c += " bad";
+    code.appendChild(el("div", c, text===""?" ":text));
+  });
+  pane.appendChild(code);
+  return pane;
+}
+
+// ---- top-level render ------------------------------------------------------
+function render(){
+  renderReps();
+  const rep = activeReport();
+  if (!rep){
+    document.getElementById("summary").textContent="";
+    document.getElementById("filters").textContent="";
+    document.getElementById("runlist").textContent="";
+    document.getElementById("runcount").textContent="";
+    document.getElementById("detail").textContent="";
+    document.getElementById("detail").appendChild(
+      el("div","empty","No reports loaded. Drag a profiles_*.json file here."));
+    return;
+  }
+  const st = stateFor(activeKey);
+  // header context line
+  const sh = document.getElementById("subhead");
+  if (activeKey===DB_KEY){
+    const dbFilter = rep.db_model_filter;
+    const scope = dbFilter && dbFilter.length ? `model: ${dbFilter.join(", ")}` : "all models";
+    sh.textContent = `Whole DB snapshot · ${rep.rows.length} rows · ${scope} · taken ${fmtDate(rep.generated_at)} · ${rep.db_path||""}`;
+  }
+  else
+    sh.textContent = `${rep.filename} · generated ${fmtDate(rep.generated_at)} · model: ${(rep.model_names||["all models"]).join(", ")}`;
+
+  renderFilters(rep, st);
+  renderRunList(rep, st);   // also triggers renderDetail
+}
+
+// ---- drag & drop -----------------------------------------------------------
+function addReport(obj, filename){
+  if (!validReport(obj)){ alert("Not a valid NS failure report: "+filename); return; }
+  obj.filename = obj.filename || filename || ("report-"+Date.now());
+  const i = reports.findIndex(r=>r.filename===obj.filename);
+  if (i>=0) reports.splice(i,1);
+  indexReport(obj);
+  reports.push(obj);
+  sortReports();
+  activeKey = obj.filename;
+  render();
+}
+function handleFiles(files){
+  for (const f of files){
+    if (!/\.json$/i.test(f.name)){ alert("Ignoring non-JSON file: "+f.name); continue; }
+    if (f.size>MAX_DROP_BYTES){ alert("File too large: "+f.name); continue; }
+    const reader = new FileReader();
+    reader.onload = ()=>{ let obj; try{obj=JSON.parse(reader.result);}catch(e){alert("Could not parse JSON: "+f.name);return;} addReport(obj,f.name); };
+    reader.onerror = ()=>alert("Could not read file: "+f.name);
+    reader.readAsText(f);
+  }
+}
+window.addEventListener("dragover", e=>{ e.preventDefault(); document.body.classList.add("dragover"); });
+window.addEventListener("dragleave", e=>{ if (e.target===document.documentElement) document.body.classList.remove("dragover"); });
+window.addEventListener("drop", e=>{
+  e.preventDefault(); document.body.classList.remove("dragover");
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+
+// ---- boot ------------------------------------------------------------------
+(function init(){
+  let embedded=[];
+  try {
+    const raw = document.getElementById("embedded-reports").textContent;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) embedded = parsed;
+  } catch(e){ embedded=[]; }
+  reports = embedded.filter(validReport).map(indexReport);
+  sortReports();
+  if (reports.length) activeKey = reports[0].filename;
+  render();
+})();
+</script>
+</body>
+</html>
