@@ -35,8 +35,6 @@ model alone and prints the two accuracies side by side.
 
 ## The two repair loops
 
-This is the interesting part, and most of the history below is about getting here.
-
 **Growing hints.** Each validation rule has its own exception class carrying a plain-English
 `hint`. When the model breaks a rule, that hint joins a set that **accumulates across
 attempts** rather than resetting — so by the third try the model sees every rule it has
@@ -196,8 +194,6 @@ kept for reference and marked superseded in their own headers — see below for 
 ---
 
 # How it all evolved
-
-One continuous stretch of work, May–July 2026.
 
 **Arithmetic first.** It started with plain JSON parsing that let bad output through and just
 recorded it. Then Pydantic plus `instructor`, which retries automatically **and tells the
