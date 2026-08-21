@@ -1,4 +1,4 @@
-# NS_Math — neurosymbolic solvers
+# Neurosymbolic Testing
 
 Language models are unreliable at exact reasoning. So nothing
 here asks a model to solve anything — it asks the model to **translate** a problem written in
