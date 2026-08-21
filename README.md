@@ -56,26 +56,14 @@ cd math/pipeline
 python run.py
 ```
 
-No command-line flags — settings are constants you edit in place. Problems live in
-[test_suite.py](math/pipeline/test_suite.py), where different ones are commented out for
-debugging; uncomment whichever you want to run.
-
-Each problem prints its extraction, Z3's answer and both verdicts. The summary gives
-`Baseline accuracy` (model alone) against `Neurosymbolic acc` (model + Z3) and the `Delta`
-between them, counting an answer correct within 0.01. Below that,
-`UNMATCHED ERRORS — write hints for these` lists failures no rule had a hint for. That list
-is the point: it tells you which validator to write next.
-
 ---
 
 # Logic
 
 Logic puzzles. Same translate-then-solve shape, but with a **fine-tuned** model doing the
 translating and a separate engine that works out *why* each answer choice is right or wrong.
-The wording of those explanations comes from templates rather than a model, so an explanation
-can never claim something the solver didn't prove.
 
-This folder is really two projects meeting at one point:
+Two parts:
 
 - **The solver** — what you run.
 - **The training program** — what produced the model the solver runs.
