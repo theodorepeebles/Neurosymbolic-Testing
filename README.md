@@ -1,40 +1,25 @@
 # NS_Math — neurosymbolic solvers
 
-Language models are unreliable at exact reasoning. They're very good at reading. So nothing
+Language models are unreliable at exact reasoning. So nothing
 here asks a model to solve anything — it asks the model to **translate** a problem written in
-English into structured data, hands that to [Z3](https://github.com/Z3Prover/z3) (a solver
-that reasons exactly), and only comes back to the model to phrase the result as a sentence.
-The model never computes an answer — it only ever describes the problem.
+English into structured data, hands that to [Z3] solver, and comes back 
+to the model to phrase the result.
 
-Two subsystems apply that idea to different problems:
 
 | Folder | Problem | Status |
 |---|---|---|
-| [math/](math/) | Arithmetic word problems | The original prototype — where the approach was proven |
+| [math/](math/) | Arithmetic word problems | The original prototype 
 | [logic/](logic/) | Logic puzzles (ordering, knights & knaves, grouping) | The successor: the same shape, plus a fine-tuned model and an explanation engine |
 
-Each folder also has its own README with the same material, if you'd rather read just one.
-
-## Setup
-
-- **[Ollama](https://ollama.com) running locally.** Everything talks to it over plain HTTP
-  at `localhost:11434`. Pull `qwen3:8b`.
-- **`requirements.txt`** at the repo root covers both. The core of it is small:
-  `z3-solver`, `pydantic` and `requests`. Logic additionally uses `rank-bm25`, plus
-  `pandas` / `scikit-learn` for failure analysis and torch / transformers for training.
-
-**Run scripts from inside their own `pipeline/` folder.** Imports are flat
-(`from pipeline import ...`) and data paths are relative, so running from the repo root
-breaks. In math's case the folder is also named `math`, which would otherwise shadow
-Python's own `math` module.
+Each folder also has its own README with similar material, if you'd rather read just one.
 
 ---
 
 # Math
 
 Arithmetic word problems. The model translates the problem into variables and equations; Z3
-does every calculation. To show this actually helps, each run also solves the problem the
-ordinary way — model alone, no solver — and prints the two accuracies side by side.
+does the calculation. To show this actually helps, each run also solves the problem with the
+model alone and prints the two accuracies side by side.
 
 ## How it works
 
