@@ -1,11 +1,5 @@
 # Neurosymbolic Testing
 
-Language models are unreliable at exact reasoning. So nothing
-here asks a model to solve anything — it asks the model to **translate** a problem written in
-English into structured data, hands that to [Z3] solver, and comes back 
-to the model to phrase the result.
-
-
 | Folder | Problem | Status |
 |---|---|---|
 | [math/](math/) | Arithmetic word problems | The original prototype 
