@@ -113,13 +113,11 @@ generate → split → train → test → analyse
 ```
 
 - **[algorithmic_sft_generator.py](logic/pipeline/algorithmic_sft_generator.py)** builds
-  puzzles *backwards*: pick the answer first, derive every statement true about it, trim the
-  clues while checking the puzzle stays valid, then let Z3 decide each answer choice. The
-  model only paraphrases the finished structure into English. Because it never touches the
-  logic, it cannot introduce a logical error — correctness is guaranteed by construction
-  rather than checked afterwards.
+  puzzles backwards: the complete satisfying answer is generated first, then every true statement is derived about it,
+  then the clues are trimmed while checking to ensure the puzzle stays valid, then the answer choices are chosen. The
+  model paraphrases the finished json structure into English.
 - **[split_dataset.py](logic/pipeline/split_dataset.py)** carves the dataset 90/10 into
-  `sft_train.jsonl` and `sft_test.jsonl` (fixed seed, so the split is reproducible).
+  `sft_train.jsonl` and `sft_test.jsonl`
 - **NS_training.ipynb** fine-tunes Qwen3-0.6B in Colab on the training half only, splitting
   again internally for validation so training, validation and test stay disjoint.
 - **[run.py](logic/pipeline/run.py)** scores the trained model against the held-out half,
@@ -128,9 +126,9 @@ generate → split → train → test → analyse
 - **[analyze.py](logic/pipeline/analyze.py)** fits a decision tree over those rows to find
   where the model fails most, and **open_debug_viewer.py** renders it as a browsable page.
 
-Two rules the pipeline depends on: the dataset files and the results database are **kept
-separate and never synced** (one is input, the other a record of one evaluation run), and the
-held-out test split is **never uploaded** to the training environment.
+The dataset files and the results database are kept separate and never 
+synced (one is input, the other a record of one evaluation run), and the
+held-out test split is never uploaded to the training environment.
 
 ## Running it
 
@@ -151,16 +149,14 @@ files moved.
 
 Beyond the shared setup above:
 
-- Extraction uses a **fine-tuned model**, `SFT_Extraction_Qwen3_0.6b-v4` — not the base one.
+- Extraction uses a fine-tuned Qwen3_0.6b model
   `qwen3:8b` still handles puzzle-type classification, free-text REPL questions and the
   baseline.
 - **The trained weights are not in this repo.** They're ~610 MB each and excluded from git,
   so a fresh clone can't run the solver until you obtain them or retrain.
-  `logic/models/Modelfile` holds the Ollama configuration for them.
 
-> ⚠️ The extraction system prompt in [prompts.py](logic/pipeline/prompts.py) must stay
-> **byte-identical** to the one in the training script. If they drift, the fine-tuned model
-> sees a prompt it was never trained on and accuracy drops. Change both together.
+> The extraction system prompt in [prompts.py](logic/pipeline/prompts.py) must stay
+> **byte-identical** to the one in the training script.
 
 `gemini_auto_sft.py`, `ollama_auto_sft.py`, `groq_auto_sft.py` and `verify_and_add.py` are
 kept for reference and marked superseded in their own headers — see below for why.
