@@ -159,62 +159,7 @@ Beyond the shared setup above:
 > **byte-identical** to the one in the training script.
 
 `gemini_auto_sft.py`, `ollama_auto_sft.py`, `groq_auto_sft.py` and `verify_and_add.py` are
-kept for reference and marked superseded in their own headers — see below for why.
-
----
-
-# How it all evolved
-
-**Arithmetic first.** It started with plain JSON parsing that let bad output through and just
-recorded it. Then Pydantic plus `instructor`, which retries automatically **and tells the
-model what it got wrong** instead of just asking again. `instructor` was dropped days later
-(`168f1f1` — *"too complicated and wasnt working"*) for a retry loop written by hand.
-
-But the idea outlived the library, and became the backbone of everything after. The hint
-system is that same tell-it-what-it-did-wrong retry, rebuilt by hand and made specific to each
-rule — first as surgical reprompting (`0fa7b36`), then split into small validators with one
-custom error each (`111c262`), then with each hint attached to its error class (`6c4c820`).
-Validation was deliberately moved **out** of Pydantic's own validators into plain functions
-(`83e1f8f`), because Pydantic buried the custom errors in its own noise and the model retried
-worse for it. A retry for contradictory equations followed (`d4e2c0b`), later learning to
-include the actual conflict rather than just reporting failure (`4d2f579`). The model-only
-baseline came last (`21e6665`), so the improvement could be measured rather than assumed.
-
-**Then logic puzzles.** The math pipeline was adapted to a new domain (`f3a98f4`) — same
-shape, but with a constraint vocabulary and the per-puzzle schema building described above.
-
-*Dead end — `outlines`.* The `outlines` library plus HuggingFace was tried as another way to
-force output into shape, compared head to head against Ollama, then removed (`2f5d71d`). What
-survived was the pluggable extractor design it forced, which is why extraction is swappable
-today.
-
-**Getting training data took four attempts before the one that worked.** Two things shaped
-this: everything had to fit inside **free API tiers**, and trying three different providers
-was itself the point — to find which was actually best and most efficient at the job.
-
-1. **By hand, with a flagship model.** Problems and extractions generated in a Gemini Pro
-   chat window (`52dc641`), then `verify_and_add.py` (`63d26b1`) to check them before
-   appending. Write the data with a strong model, verify, add.
-2. **`gemini_auto_sft.py`** automated that, but hard problems had to be dropped — the free
-   Flash tier couldn't do them reliably.
-3. **`ollama_auto_sft.py`** used a much larger cloud model, which handled hard problems again.
-4. **`groq_auto_sft.py`** tried the same on a third provider, comparing speed and rate limits.
-5. **`algorithmic_sft_generator.py` won** (`a49b934`), and the other four were marked
-   superseded.
-
-The reason it won: in every earlier version the model had to both *invent* a valid puzzle and
-be *checked* afterwards, and anything subtly wrong had to be caught. The algorithmic generator
-moves the model's job down to just writing the prose. Correctness stops depending on the model
-at all — making the data far more reliable, and cheap enough to stay inside a free tier no
-matter the provider.
-
-**After that.** Logging was restructured so everything lands in one dataset file and is split
-from there (`67ebc4e`), earlier bad data moved aside rather than deleted. The failure-analysis
-decision tree (`c782ce2`) and debug viewer (`3048469`) made evaluation results readable rather
-than merely stored. Attribution — tying each constraint back to the sentence it came from —
-meant regenerating the dataset so problem text was built *from* the constraints instead of
-matched to them afterwards (`9d1c13d`). Then the explanation engine (`60a43fa`), template
-wording (`131766d`), and the REPL and browser chat on top (`29cfe07`, `740b206`).
+kept for reference and marked superseded in their own headers.
 
 Work wound down once the features it was built to prove were working and integrated end to
 end, with the same approach then carried into a further domain. Neither subsystem is
