@@ -5,7 +5,6 @@
 | [math/](math/) | Arithmetic word problems | The original prototype 
 | [logic/](logic/) | Logic puzzles (ordering, knights & knaves, grouping) | The successor: the same shape, plus a fine-tuned model and an explanation engine |
 
-Each folder also has its own README with similar material.
 
 ---
 
