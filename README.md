@@ -5,14 +5,14 @@
 | [math/](math/) | Arithmetic word problems | The original prototype 
 | [logic/](logic/) | Logic puzzles (ordering, knights & knaves, grouping) | The successor: the same shape, plus a fine-tuned model and an explanation engine |
 
-Each folder also has its own README with similar material, if you'd rather read just one.
+Each folder also has its own README with similar material.
 
 ---
 
 # Math
 
 Arithmetic word problems. The model translates the problem into variables and equations; Z3
-does the calculation. To show this actually helps, each run also solves the problem with the
+does the calculation. To show the difference this makes, each run also solves the problem with the
 model alone and prints the two accuracies side by side.
 
 ## How it works
@@ -30,18 +30,14 @@ model alone and prints the two accuracies side by side.
 ## The two repair loops
 
 **Growing hints.** Each validation rule has its own exception class carrying a plain-English
-`hint`. When the model breaks a rule, that hint joins a set that **accumulates across
-attempts** rather than resetting — so by the third try the model sees every rule it has
+`hint`. When the model breaks a rule, that hint joins a set that accumulates across
+attempts  — so by the third try the model sees every rule it has
 broken so far, alongside its own bad JSON and the exact error. Failures with no matching hint
-are collected and printed at the end, telling you which hint to write next.
+are collected and printed at the end.
 
 **Contradiction feedback.** When Z3 finds the equations impossible, it reports the smallest
 conflicting subset, rendered back into readable lines (`total_pay = daily_pay * days`) and
 fed to the model for one re-translation.
-
-The rule doing the most work is `SelfReferentialConstraint`: Z3 solves every equation at once,
-not top to bottom, so `total = total * days` isn't a running total — it's a contradiction, and
-the model has to introduce a new variable instead.
 
 ## Running it
 
@@ -56,11 +52,12 @@ python run.py
 
 Logic puzzles. Same translate-then-solve shape, but with a **fine-tuned** model doing the
 translating and a separate engine that works out *why* each answer choice is right or wrong.
+Built for logic problems of grouping, ordering, and knights and knaves (truth-tellers and deceivers.
 
 Two parts:
 
-- **The solver** — what you run.
-- **The training program** — what produced the model the solver runs.
+- **The solver** — the pipeline that solves problems
+- **The training program** — what produced the model the solver runs
 
 ## The solver
 
@@ -73,10 +70,10 @@ Two parts:
 | Solve | Constraints go to Z3. Each answer choice is tested **on its own**. |
 | Explain | For a wrong choice, Z3 finds the smallest set of clues ruling it out; templates turn that into prose. |
 
-### The schema is built per puzzle, on purpose
+### Schema
 
-The main design decision in the solver, and it's about **narrowing what the model is allowed
-to get wrong**. Two things narrow it:
+The JSON schema used in constrained decoding is designed to narrowing what the model is allowed
+to get wrong. Two things narrow it:
 
 1. `build_hybrid_schema()` in [validators.py](logic/pipeline/validators.py) includes only the
    constraint types belonging to the puzzle types actually present. A knights-and-knaves
@@ -89,30 +86,25 @@ to get wrong**. Two things narrow it:
    exactly its own fields, so invalid combinations can't be expressed at all.
 
 Fewer available choices means fewer wrong ones — a large part of how a model this small
-manages the task at all. (The recursive `if_then` / `not` / `and` / `or` wrappers are rebuilt
-fresh on every call; otherwise the first puzzle's classes would be reused for every puzzle
-after it.)
+manages the task at all.
 
 ### Judging answers, and explaining them
 
-Each choice is labelled `must_be_true`, `could_be_true`, `must_be_false` or `could_be_false`.
+Each answer choice is labelled `must_be_true`, `could_be_true`, `must_be_false` or `could_be_false`.
 The solver asserts either the choice or its opposite, then asks Z3 whether the puzzle is
-still solvable — "must be true" means asserting the *opposite* makes it impossible. Every
-choice is checked independently.
+still solvable — "must be true" means asserting the *opposite* makes it impossible.
 
 [explanation.py](logic/pipeline/explanation.py) does the reasoning and
-[verbalization.py](logic/pipeline/verbalization.py) the wording, in that order, with no model
-in either. Given a ruled-out choice, it finds the *minimal* sets of clues that conflict with
-it — the smallest group you could point at and say "these are why not". It rebuilds its own
-constraint set to do this, so implicit rules ("two people can't share a seat") can appear in
-an explanation even though the solver never states them out loud. Constraints also carry the
+[verbalization.py](logic/pipeline/verbalization.py) the wording, in that order.
+Given a ruled-out choice, it finds the *minimal* sets of clues that conflict with
+it. It rebuilds its own constraint set to do this, so implicit rules ("two people can't share a seat") 
+can appear in an explanation even though the solver never states them out loud. Constraints also carry the
 phrase they came from, so an explanation can quote the actual sentence;
 [attribution.py](logic/pipeline/attribution.py) maps that text back to a position in the
 problem, falling back to a similarity search when the quote isn't exact.
 
-Looks like a bug, isn't: the retry-on-contradiction path exists but is **deliberately switched
-off** — the fine-tuned model was never trained on correction prompts, so re-asking made things
-worse.
+Note: the retry-on-contradiction path exists but is deliberately switched
+off — the fine-tuned model was never trained on correction prompts.
 
 ## The training program
 
