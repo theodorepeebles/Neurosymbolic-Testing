@@ -35,7 +35,7 @@ RUN_BASELINE = False
 # True: skip the classifier and feed each problem's ground-truth active_domains
 # (from sft_test.jsonl) into the pipeline, so domains are always correct.
 # False: predict domains at runtime with each MODEL_SETS entry's classifier_llm.
-USE_GROUND_TRUTH_DOMAINS = True
+USE_GROUND_TRUTH_DOMAINS = False
 
 # Model used for the direct-LLM baseline (run once per problem, so it isn't tied to a
 # single MODEL_SETS entry). Single source of truth for the baseline model.
