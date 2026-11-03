@@ -159,7 +159,3 @@ Beyond the shared setup above:
 
 `gemini_auto_sft.py`, `ollama_auto_sft.py`, `groq_auto_sft.py` and `verify_and_add.py` are
 kept for reference and marked superseded in their own headers.
-
-Work wound down once the features it was built to prove were working and integrated end to
-end, with the same approach then carried into a further domain. Neither subsystem is
-half-finished — both reached what they were for.
