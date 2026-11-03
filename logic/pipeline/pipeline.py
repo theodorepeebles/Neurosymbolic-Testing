@@ -496,7 +496,7 @@ def _handle_unsat_retry(
 
 def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_model: str,
                     active_domains: list[str] | None = None,
-                    use_ground_truth_domains: bool = True,
+                    use_ground_truth_domains: bool = False,
                     verbalize: bool = False) -> dict:
     result = {
         "extracted":        None,
