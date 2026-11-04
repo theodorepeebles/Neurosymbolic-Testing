@@ -24,12 +24,13 @@ from pipeline import (
 from pricing import cost
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
+from demo_logger import start_demo_file, log_demo, pipeline_filename, baseline_filename
 import eval_metrics
 import attribution
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
-NUM_TEST_EXAMPLES = 2
+NUM_TEST_EXAMPLES = 5
 
 RUN_BASELINE = True
 
@@ -38,11 +39,22 @@ RUN_BASELINE = True
 # False: predict domains at runtime with each MODEL_SETS entry's classifier_llm.
 USE_GROUND_TRUTH_DOMAINS = False
 
-# Model used for the direct-LLM baseline (run once per problem, so it isn't tied to a
-# single MODEL_SETS entry). Single source of truth for the baseline model.
-BASELINE_MODEL = "gemma4:31b-cloud"
+# Direct-LLM baselines, each run once per problem (not tied to a MODEL_SETS entry).
+# "think": True = thinking on, False = off. gpt-oss can't turn thinking off; it ignores
+# True/False, so it's run at its "low" and "high" levels instead.
+BASELINE_MODELS = [
+    {"model": "gpt-oss:120b-cloud", "think": "low"},
+    {"model": "gpt-oss:120b-cloud", "think": "high"},
+    # {"model": "gemma4:31b-cloud", "think": False},
+    # {"model": "gemma4:31b-cloud", "think": True},
+]
 
 LOG_TO_DB = False
+
+# Write one JSONL file per setup (pipeline model set / baseline) to data/demo_runs/,
+# one line per problem. Summarize with: python demo_summary.py FILE.jsonl [FILE.jsonl ...]
+# Each run empties its setup's file first, so rerunning a setup replaces its old results.
+LOG_TO_DEMO = True
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
@@ -55,6 +67,7 @@ MODEL_SETS = [
     # },
       {
         "name": "SFT_Extraction_Qwen3_0.6b-v4",
+        "short": "SFT-0.6b-v4",   # used in the demo filename
         "classifier_llm": "qwen3:8b",
         "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v4",
         "formatting_llm": "qwen3:8b",
@@ -117,8 +130,26 @@ def derive_ground_truth(gold: dict, active_domains: list[str]):
         return None
 
 
+def baseline_label(b: dict) -> str:
+    return f"{b['model']} (think={b['think']})"
+
+
+
 if LOG_TO_DB:
     init_db()
+
+# One demo file per setup, emptied at the start of the run.
+demo_paths = {}
+if LOG_TO_DEMO:
+    for ms in MODEL_SETS:
+        cls = None if USE_GROUND_TRUTH_DOMAINS else ms["classifier_llm"]
+        demo_paths[ms["name"]] = start_demo_file(pipeline_filename(ms.get("short") or ms["name"], cls))
+    if RUN_BASELINE:
+        for b in BASELINE_MODELS:
+            demo_paths[baseline_label(b)] = start_demo_file(baseline_filename(b["model"], b["think"]))
+    for p in demo_paths.values():
+        print(f"Demo log: {os.path.normpath(p)}")
+
 test_rows = load_test_set(TEST_SET_PATH, NUM_TEST_EXAMPLES)
 total_problems = len(test_rows)
 results = []
@@ -136,21 +167,40 @@ for i, row in enumerate(test_rows, 1):
     record = {
         "problem":        problem,
         "ground_truth":   gt,
-        "baseline_correct": None,
+        "baseline_correct": {},
         "ns_results":     {},
     }
 
-    # Baseline — run once per problem, not once per model set
-    if RUN_BASELINE:
+    # Baselines — each run once per problem, not once per model set
+    # Baseline results are never logged to the DB, even when LOG_TO_DB is on.
+    for b in (BASELINE_MODELS if RUN_BASELINE else []):
+        label = baseline_label(b)
         t0 = time.time()
         baseline_usage = new_usage()
-        baseline_answer, _baseline_parse_error, _baseline_raw = baseline_llm_solve(
-            problem, model=BASELINE_MODEL, usage=baseline_usage)
-        record["baseline_correct"] = (
+        baseline_answer, baseline_error, _baseline_raw = baseline_llm_solve(
+            problem, model=b["model"], think=b["think"], usage=baseline_usage)
+        baseline_ms = int((time.time() - t0) * 1000)
+        baseline_correct = (
             baseline_answer is not None and gt is not None
             and baseline_answer.upper() == gt.upper()
         )
-        print(usage_line("Baseline", BASELINE_MODEL, baseline_usage))
+        record["baseline_correct"][label] = baseline_correct
+        print(f"  Baseline [{label}]: answer {baseline_answer}  correct: {baseline_correct}  "
+              f"({baseline_ms} ms)" + (f"  note: {baseline_error}" if baseline_error else ""))
+        print(usage_line("Baseline", b["model"], baseline_usage))
+
+        if LOG_TO_DEMO:
+            log_demo(demo_paths[label], {
+                "problem_id":     run_id,
+                "answer":         baseline_answer,
+                "correct_answer": gt,
+                "correct":        baseline_correct,
+                "in_tok":         baseline_usage["in_tok"],
+                "out_tok":        baseline_usage["out_tok"],
+                "time_ms":        baseline_ms,
+                "error":          baseline_error,
+                "model":          b["model"],
+            })
 
     # NS pipeline — once per model set
     for ms in MODEL_SETS:
@@ -242,6 +292,39 @@ for i, row in enumerate(test_rows, 1):
         if LOG_TO_DB:
             log_attempt(db_row)
 
+        if LOG_TO_DEMO:
+            cls_usage, ext_usage = ns["classifier_usage"], ns["extraction_usage"]
+            verified = ([l for l, v in ns["question_results"][0].items() if v]
+                        if ns.get("question_results") else [])
+            if USE_GROUND_TRUTH_DOMAINS:
+                predicted_domains = classifier_correct = None
+            else:
+                predicted_domains = ns.get("active_domains")  # missing if the classifier failed
+                classifier_correct = (predicted_domains is not None
+                                      and set(predicted_domains) == set(active_domains))
+            formatted = ns.get("formatted_output") or ""
+            log_demo(demo_paths[ms["name"]], {
+                "problem_id":         run_id,
+                # One verified label is the answer; several (ambiguous extraction) are joined.
+                "answer":             ",".join(verified) or None,
+                "correct_answer":     gt,
+                "correct":            ns_correct,
+                "in_tok":             cls_usage["in_tok"] + ext_usage["in_tok"],
+                "out_tok":            cls_usage["out_tok"] + ext_usage["out_tok"],
+                "time_ms":            gen_ms,
+                "error":              error_tb or (formatted if formatted.startswith("ERROR") else None),
+                "predicted_domains":  predicted_domains,
+                "correct_domains":    active_domains,
+                "classifier_correct": classifier_correct,
+                "classifier_model":   None if USE_GROUND_TRUTH_DOMAINS else ms["classifier_llm"],
+                "cls_in_tok":         cls_usage["in_tok"],
+                "cls_out_tok":        cls_usage["out_tok"],
+                "extraction_model":   ms["extraction_llm"],
+                "ext_in_tok":         ext_usage["in_tok"],
+                "ext_out_tok":        ext_usage["out_tok"],
+                "z3_status":          z3_status,
+            })
+
         record["ns_results"][ms["name"]] = {
             "ns_correct": ns_correct,
             "z3_status":  z3_status,
@@ -267,7 +350,8 @@ print(f"{'='*60}")
 print(f"  Total examples : {total}")
 print()
 
-col_w = max((len(ms["name"]) for ms in MODEL_SETS), default=10) + 12
+baseline_labels = [baseline_label(b) for b in BASELINE_MODELS] if RUN_BASELINE else []
+col_w = max((len(n) for n in [ms["name"] for ms in MODEL_SETS] + baseline_labels), default=10) + 2
 header = f"  {'Model':<{col_w}}  {'Correct':<10}  Accuracy"
 print(header)
 print(f"  {'-'*len(header.strip())}")
@@ -277,7 +361,11 @@ for ms in MODEL_SETS:
     pct = (count / total * 100) if total else 0
     print(f"  {ms['name']:<{col_w}}  {f'{count}/{total}':<10}  {pct:.1f}%")
 
-if RUN_BASELINE:
-    correct_baseline = sum(1 for r in results if r["baseline_correct"] is True)
+for label in baseline_labels:
+    correct_baseline = sum(1 for r in results if r["baseline_correct"].get(label) is True)
     pct = (correct_baseline / total * 100) if total else 0
-    print(f"  {'Baseline LLM':<{col_w}}  {f'{correct_baseline}/{total}':<10}  {pct:.1f}%")
+    print(f"  {label:<{col_w}}  {f'{correct_baseline}/{total}':<10}  {pct:.1f}%")
+
+if LOG_TO_DEMO:
+    print("\nCompare runs with:")
+    print("  python demo_summary.py " + " ".join(os.path.basename(p) for p in demo_paths.values()))

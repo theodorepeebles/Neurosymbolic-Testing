@@ -18,7 +18,7 @@ def new_usage() -> dict:
     return {"in_tok": 0, "out_tok": 0, "thinking_chars": 0}
 
 
-def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool = False, timeout: int = 150, is_extraction: bool = False, usage: dict | None = None) -> str:
+def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool | str = False, timeout: int = 300, is_extraction: bool = False, usage: dict | None = None) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     If `usage` (from new_usage()) is given, this call's input/output tokens are added to it
@@ -207,7 +207,7 @@ def extract_logic_problem(
 
 
 
-def baseline_llm_solve(problem: str, model: str, think: bool = False, usage: dict | None = None) -> tuple[str | None, str | None, str]:
+def baseline_llm_solve(problem: str, model: str, think: bool | str = False, usage: dict | None = None) -> tuple[str | None, str | None, str]:
     """
     Sends the problem directly to the LLM and parses an answer choice label.
     Returns (label, None, raw) on success, (None, error_string, raw) on parse failure.
@@ -614,7 +614,7 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
 
     except RuntimeError as e:
         print(f"  [!] NS Pipeline failed due to timeout/connection error: {e}")
-        result["formatted_output"] = f"ERROR: TIMEOUT_OR_CONNECTION_ERROR"
+        result["formatted_output"] = f"ERROR: TIMEOUT_OR_CONNECTION_ERROR: {e}"
         return result
 
     return result
