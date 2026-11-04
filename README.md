@@ -5,6 +5,9 @@
 | [math/](math/) | Arithmetic word problems | The original prototype 
 | [logic/](logic/) | Logic puzzles (ordering, knights & knaves, grouping) | The successor: the same shape, plus a fine-tuned model and an explanation engine |
 
+## Setup
+
+Requires Python 3.12. Install dependencies with `pip install -r requirements.txt`.
 
 ---
 
