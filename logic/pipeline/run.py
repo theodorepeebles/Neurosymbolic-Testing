@@ -19,8 +19,9 @@ from functools import partial
 
 from pipeline import (
     run_ns_pipeline, baseline_llm_solve, constraint_type_counts,
-    extract_logic_problem, z3_solve,
+    extract_logic_problem, z3_solve, new_usage,
 )
+from pricing import cost
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
 import eval_metrics
@@ -28,9 +29,9 @@ import attribution
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
-NUM_TEST_EXAMPLES = None
+NUM_TEST_EXAMPLES = 2
 
-RUN_BASELINE = False
+RUN_BASELINE = True
 
 # True: skip the classifier and feed each problem's ground-truth active_domains
 # (from sft_test.jsonl) into the pipeline, so domains are always correct.
@@ -39,9 +40,9 @@ USE_GROUND_TRUTH_DOMAINS = False
 
 # Model used for the direct-LLM baseline (run once per problem, so it isn't tied to a
 # single MODEL_SETS entry). Single source of truth for the baseline model.
-BASELINE_MODEL = "qwen3:8b"
+BASELINE_MODEL = "gemma4:31b-cloud"
 
-LOG_TO_DB = True
+LOG_TO_DB = False
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
@@ -88,6 +89,16 @@ def load_test_set(path: str, limit=None) -> list[dict]:
     return rows
 
 
+def usage_line(label: str, model: str, usage: dict) -> str:
+    """One printable line of tokens + cost for a stage. Missing prices print as 'no price'."""
+    try:
+        cost_str = f"${cost(model, usage['in_tok'], usage['out_tok']):.6f}"
+    except (KeyError, ValueError):
+        cost_str = "no price"
+    return (f"  {label:<11} [{model}]  in: {usage['in_tok']}  out: {usage['out_tok']}  "
+            f"cost: {cost_str}")
+
+
 def derive_ground_truth(gold: dict, active_domains: list[str]):
     """Z3-solve the gold extraction to recover the correct answer label.
 
@@ -132,11 +143,14 @@ for i, row in enumerate(test_rows, 1):
     # Baseline — run once per problem, not once per model set
     if RUN_BASELINE:
         t0 = time.time()
-        baseline_answer, _baseline_parse_error, _baseline_raw = baseline_llm_solve(problem, model=BASELINE_MODEL)
+        baseline_usage = new_usage()
+        baseline_answer, _baseline_parse_error, _baseline_raw = baseline_llm_solve(
+            problem, model=BASELINE_MODEL, usage=baseline_usage)
         record["baseline_correct"] = (
             baseline_answer is not None and gt is not None
             and baseline_answer.upper() == gt.upper()
         )
+        print(usage_line("Baseline", BASELINE_MODEL, baseline_usage))
 
     # NS pipeline — once per model set
     for ms in MODEL_SETS:
@@ -164,7 +178,8 @@ for i, row in enumerate(test_rows, 1):
             error_tb = traceback.format_exc()
             ns = {"extracted": None, "z3_status": None, "question_results": None,
                   "llm_calls": 0, "unmatched_errors": [], "formatted_output": None,
-                  "extraction_raw": None}
+                  "extraction_raw": None,
+                  "classifier_usage": new_usage(), "extraction_usage": new_usage()}
         gen_ms = int((time.time() - t0) * 1000)
 
         # Did the model land on exactly the right answer?
@@ -235,6 +250,9 @@ for i, row in enumerate(test_rows, 1):
         }
         print(f"  Z3: {z3_status} \n correct: {ns_correct}  "
               f"exact_global_match: {metrics['exact_global_constraint_match']} \n  ({gen_ms} ms)")
+        if not USE_GROUND_TRUTH_DOMAINS:
+            print(usage_line("Classifier", ms["classifier_llm"], ns["classifier_usage"]))
+        print(usage_line("Extraction", ms["extraction_llm"], ns["extraction_usage"]))
         if ns.get("formatted_output"):
             print("  --- Explanation ---")
             print(ns["formatted_output"])

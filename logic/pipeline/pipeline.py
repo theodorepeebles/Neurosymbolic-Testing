@@ -13,9 +13,16 @@ from prompts import (
 )
 
 
-def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool = False, timeout: int = 150, is_extraction: bool = False) -> str:
+def new_usage() -> dict:
+    """Empty token tally to pass as ask_llm(usage=...)."""
+    return {"in_tok": 0, "out_tok": 0, "thinking_chars": 0}
+
+
+def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool = False, timeout: int = 150, is_extraction: bool = False, usage: dict | None = None) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
+    If `usage` (from new_usage()) is given, this call's input/output tokens are added to it
+    (output tokens include thinking tokens).
     Returns:
         the stripped LLM response.
     """
@@ -44,7 +51,12 @@ def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think:
         # This forces an exception if Ollama returns a 500 Internal Server Error
         response.raise_for_status()
 
-        return response.json()["response"].strip()
+        data = response.json()
+        if usage is not None:
+            usage["in_tok"]         += data.get("prompt_eval_count", 0)
+            usage["out_tok"]        += data.get("eval_count", 0)
+            usage["thinking_chars"] += len(data.get("thinking") or "")
+        return data["response"].strip()
 
     except requests.exceptions.Timeout:
         raise RuntimeError(f"Ollama API timed out after {timeout} seconds. The server might be hung.")
@@ -54,8 +66,8 @@ def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think:
         raise RuntimeError(f"Ollama API error: {e}")
 
 
-def classify_domains(problem_text: str, model: str) -> list[str]:
-    response = ask_llm(prompt=problem_text, system=CLASSIFIER_SYSTEM, think=False, model=model)
+def classify_domains(problem_text: str, model: str, usage: dict | None = None) -> list[str]:
+    response = ask_llm(prompt=problem_text, system=CLASSIFIER_SYSTEM, think=False, model=model, usage=usage)
 
     # Scan from the end — guards against "ACTIVE_DOMAINS" appearing in reasoning trace
     domains = None
@@ -99,6 +111,7 @@ def extract_logic_problem(
     model: str,
     unsat_context: str = None,
     finetuned: bool = False,
+    usage: dict | None = None,
 ) -> tuple:
     """
     Extract a logic puzzle into a LogicProblem via the LLM, with schema-validation retry.
@@ -136,7 +149,7 @@ def extract_logic_problem(
         # may still wrap output in markdown fences or add prose. Strip fences before
         # json.loads (see `cleaned` below). This is not documented by Ollama explicitly;
         # confirmed empirically by observing fence-wrapped responses from cloud models.
-        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model, is_extraction=True)
+        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model, is_extraction=True, usage=usage)
         last_raw = raw
         attempts_used += 1
 
@@ -194,14 +207,14 @@ def extract_logic_problem(
 
 
 
-def baseline_llm_solve(problem: str, model: str, think: bool = False) -> tuple[str | None, str | None, str]:
+def baseline_llm_solve(problem: str, model: str, think: bool = False, usage: dict | None = None) -> tuple[str | None, str | None, str]:
     """
     Sends the problem directly to the LLM and parses an answer choice label.
     Returns (label, None, raw) on success, (None, error_string, raw) on parse failure.
     model and think params allow ablation testing against different configurations.
     """
     try:
-        raw = ask_llm(prompt=problem, system=BASELINE_LOGIC_SYSTEM, model=model, think=think)
+        raw = ask_llm(prompt=problem, system=BASELINE_LOGIC_SYSTEM, model=model, think=think, usage=usage)
     except RuntimeError as e:
         return None, f"TIMEOUT_OR_CONNECTION_ERROR: {e}", ""
 
@@ -505,7 +518,9 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         "z3_status":        None,
         "formatted_output": None,
         "llm_calls":        0,
-        "unmatched_errors": []
+        "unmatched_errors": [],
+        "classifier_usage": new_usage(),   # stays 0 when ground-truth domains are used
+        "extraction_usage": new_usage(),
     }
     try:
         # STEP 1 — determine active domains
@@ -524,7 +539,8 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         else:
             if VERBOSE: print(f"  Classifying domains...")
             t_cls_start = time.time()
-            active_domains = classify_domains(problem, model=classifier_model)
+            active_domains = classify_domains(problem, model=classifier_model,
+                                              usage=result["classifier_usage"])
             t_cls_end = time.time()
             if VERBOSE: print(f"  Domains: {active_domains} ({t_cls_end - t_cls_start:.2f}s)")
             result["llm_calls"] += 1
@@ -537,7 +553,7 @@ def run_ns_pipeline(problem: str, extract_fn, classifier_model: str, formatter_m
         if VERBOSE: print(f"  Waiting for LLM extraction...")
         t_ext_start = time.time()
         extracted, unmatched_errors, ext_calls, extraction_raw = extract_fn(
-            problem, active_domains, LogicProblem
+            problem, active_domains, LogicProblem, usage=result["extraction_usage"]
         )
         t_ext_end = time.time()
         if VERBOSE: print(f"  Got extraction response ({t_ext_end - t_ext_start:.2f}s)")
