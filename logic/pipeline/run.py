@@ -68,7 +68,7 @@ MODEL_SETS = [
       {
         "name": "SFT_Extraction_Qwen3_0.6b-v4",
         "short": "SFT-0.6b-v4",   # used in the demo filename
-        "classifier_llm": "qwen3:8b",
+        "classifier_llm": "qwen3:4b-q4_K_M",  # see classifier_compare_results.md
         "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v4",
         "formatting_llm": "qwen3:8b",
     },
