@@ -30,8 +30,9 @@ PIPELINE_FIELDS = ["predicted_domains", "correct_domains", "classifier_correct",
 
 
 def short_name(model: str) -> str:
-    """Filename-safe model name: 'gpt-oss:120b-cloud' -> 'gpt-oss-120b'."""
-    name = model.removesuffix(":latest").removesuffix("-cloud")
+    """Filename-safe model name: 'gpt-oss:120b-cloud' -> 'gpt-oss-120b',
+    'nemotron-3-super:cloud' -> 'nemotron-3-super'."""
+    name = model.removesuffix(":latest").removesuffix(":cloud").removesuffix("-cloud")
     return name.replace(":", "-").replace("/", "-")
 
 
@@ -61,6 +62,41 @@ def start_demo_file(filename: str) -> str:
     path = os.path.join(DEMO_DIR, filename)
     open(path, "w", encoding="utf-8").close()
     return path
+
+
+def resume_demo_file(filename: str) -> tuple[str, set]:
+    """Open a run's file for resuming: keep its results and return (path, problem_ids already done).
+
+    A run stopped with Ctrl+C can leave a half-written last line; any line that isn't valid
+    JSON is dropped (and the file rewritten without it) so that problem is simply run again.
+    """
+    os.makedirs(DEMO_DIR, exist_ok=True)
+    path = os.path.join(DEMO_DIR, filename)
+    if not os.path.exists(path):
+        open(path, "w", encoding="utf-8").close()
+        return path, set()
+
+    good, dropped = [], 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                good.append(json.loads(line))
+            except json.JSONDecodeError:
+                dropped += 1
+    if dropped:
+        with open(path, "w", encoding="utf-8") as f:
+            for r in good:
+                f.write(json.dumps(r) + "\n")
+        print(f"  dropped {dropped} unreadable line(s) from {filename}")
+    return path, {r["problem_id"] for r in good}
+
+
+def load_demo_file(path: str) -> list[dict]:
+    """All results in a run's file."""
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def log_demo(path: str, record: dict) -> None:
