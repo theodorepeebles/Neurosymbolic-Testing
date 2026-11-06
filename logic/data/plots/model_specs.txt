@@ -1,0 +1,12 @@
+Model specs (from pricing.py)
+=============================
+
+Model                        | Total params | Active params | $ / 1M input | $ / 1M output | Price source                               
+-----------------------------+--------------+---------------+--------------+---------------+--------------------------------------------
+gemma4:31b-cloud             |          31B |           31B |        $0.14 |         $0.40 | Ollama Cloud                               
+gpt-oss:120b-cloud           |         117B |          5.1B |        $0.15 |         $0.60 | Ollama Cloud                               
+gpt-oss:20b-cloud            |          21B |          3.6B |        $0.07 |         $0.30 | Ollama Cloud                               
+nemotron-3-nano:30b-cloud    |        31.6B |          3.2B |        $0.06 |         $0.24 | Ollama Cloud                               
+nemotron-3-super:cloud       |       120.6B |         12.7B |       $0.015 |         $0.60 | Ollama Cloud                               
+SFT_Extraction_Qwen3_0.6b-v4 |         0.6B |          0.6B |        $0.10 |         $0.10 | Qwen3-0.6B on Fireworks (via price tracker)
+qwen3:4b-q4_K_M              |           4B |            4B |        $0.08 |         $0.24 | Qwen3-4B on Nebius (via price tracker)     
