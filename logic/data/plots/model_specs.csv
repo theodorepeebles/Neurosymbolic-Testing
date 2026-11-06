@@ -1,0 +1,8 @@
+﻿model,total_params_B,active_params_B,in_per_M,out_per_M,price_source
+gemma4:31b-cloud,31,31,0.14,0.4,Ollama Cloud
+gpt-oss:120b-cloud,117,5.1,0.15,0.6,Ollama Cloud
+gpt-oss:20b-cloud,21,3.6,0.07,0.3,Ollama Cloud
+nemotron-3-nano:30b-cloud,31.6,3.2,0.06,0.24,Ollama Cloud
+nemotron-3-super:cloud,120.6,12.7,0.015,0.6,Ollama Cloud
+SFT_Extraction_Qwen3_0.6b-v4,0.6,0.6,0.1,0.1,Qwen3-0.6B on Fireworks (via price tracker)
+qwen3:4b-q4_K_M,4,4,0.08,0.24,Qwen3-4B on Nebius (via price tracker)

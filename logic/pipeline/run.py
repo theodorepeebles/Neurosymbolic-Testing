@@ -24,13 +24,14 @@ from pipeline import (
 from pricing import cost
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
-from demo_logger import start_demo_file, log_demo, pipeline_filename, baseline_filename
+from demo_logger import (start_demo_file, resume_demo_file, load_demo_file, log_demo,
+                         pipeline_filename, baseline_filename)
 import eval_metrics
 import attribution
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # How many test examples to run. None = all rows in sft_test.jsonl.
-NUM_TEST_EXAMPLES = 5
+NUM_TEST_EXAMPLES = None
 
 RUN_BASELINE = True
 
@@ -43,18 +44,29 @@ USE_GROUND_TRUTH_DOMAINS = False
 # "think": True = thinking on, False = off. gpt-oss can't turn thinking off; it ignores
 # True/False, so it's run at its "low" and "high" levels instead.
 BASELINE_MODELS = [
-    {"model": "gpt-oss:120b-cloud", "think": "low"},
-    {"model": "gpt-oss:120b-cloud", "think": "high"},
+    # {"model": "gpt-oss:120b-cloud", "think": "low"},
+    # {"model": "gpt-oss:120b-cloud", "think": "high"},
+    # nemotron-3-super reasons even with think=False (Ollama can't turn it off), so its run counts
+    # as thinking on: the think=False results were saved as ..._think-on.jsonl. Don't rerun either.
+    # {"model": "nemotron-3-super:cloud", "think": False},
+    # {"model": "nemotron-3-super:cloud", "think": True},
     # {"model": "gemma4:31b-cloud", "think": False},
     # {"model": "gemma4:31b-cloud", "think": True},
+    # {"model": "gpt-oss:20b-cloud", "think": "low"},
+    # {"model": "gpt-oss:20b-cloud", "think": "high"},
+    # nemotron-3-nano also reasons with think=False (same as super), so it's run with thinking on only.
+    {"model": "nemotron-3-nano:30b-cloud", "think": True},
 ]
 
 LOG_TO_DB = False
 
 # Write one JSONL file per setup (pipeline model set / baseline) to data/demo_runs/,
 # one line per problem. Summarize with: python demo_summary.py FILE.jsonl [FILE.jsonl ...]
-# Each run empties its setup's file first, so rerunning a setup replaces its old results.
 LOG_TO_DEMO = True
+
+# True: keep each setup's existing file and skip problems already in it, so a run stopped
+# with Ctrl+C picks up where it left off. False: empty the file and start that setup over.
+RESUME = True
 
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
@@ -65,13 +77,14 @@ MODEL_SETS = [
     #     "extraction_llm": "qwen3:0.6b",
     #     "formatting_llm": "qwen3:8b",
     # },
-      {
-        "name": "SFT_Extraction_Qwen3_0.6b-v4",
-        "short": "SFT-0.6b-v4",   # used in the demo filename
-        "classifier_llm": "qwen3:4b-q4_K_M",  # see classifier_compare_results.md
-        "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v4",
-        "formatting_llm": "qwen3:8b",
-    },
+    # Commented out for baseline-only runs, so the pipeline isn't rerun and its results file isn't emptied.
+    #   {
+    #     "name": "SFT_Extraction_Qwen3_0.6b-v4",
+    #     "short": "SFT-0.6b-v4",   # used in the demo filename
+    #     "classifier_llm": "qwen3:4b-q4_K_M",  # see classifier_compare_results.md
+    #     "extraction_llm": "SFT_Extraction_Qwen3_0.6b-v4",
+    #     "formatting_llm": "qwen3:8b",
+    # },
 ]
 
 # Models extracted with finetuned=True (minimal FT_EXTRACTION_SYSTEM prompt, raw JSON).
@@ -138,17 +151,30 @@ def baseline_label(b: dict) -> str:
 if LOG_TO_DB:
     init_db()
 
-# One demo file per setup, emptied at the start of the run.
+# One demo file per setup. With RESUME, existing results are kept and done_ids[label]
+# holds the problems already in the file, which are skipped below.
 demo_paths = {}
+done_ids = {}
+
+def open_demo(label: str, filename: str) -> None:
+    if RESUME:
+        demo_paths[label], done_ids[label] = resume_demo_file(filename)
+    else:
+        demo_paths[label], done_ids[label] = start_demo_file(filename), set()
+
 if LOG_TO_DEMO:
     for ms in MODEL_SETS:
         cls = None if USE_GROUND_TRUTH_DOMAINS else ms["classifier_llm"]
-        demo_paths[ms["name"]] = start_demo_file(pipeline_filename(ms.get("short") or ms["name"], cls))
+        open_demo(ms["name"], pipeline_filename(ms.get("short") or ms["name"], cls))
     if RUN_BASELINE:
         for b in BASELINE_MODELS:
-            demo_paths[baseline_label(b)] = start_demo_file(baseline_filename(b["model"], b["think"]))
-    for p in demo_paths.values():
-        print(f"Demo log: {os.path.normpath(p)}")
+            open_demo(baseline_label(b), baseline_filename(b["model"], b["think"]))
+    for label, p in demo_paths.items():
+        print(f"Demo log: {os.path.normpath(p)}  ({len(done_ids[label])} already done)")
+
+
+def already_done(label: str, run_id: str) -> bool:
+    return run_id in done_ids.get(label, set())
 
 test_rows = load_test_set(TEST_SET_PATH, NUM_TEST_EXAMPLES)
 total_problems = len(test_rows)
@@ -158,8 +184,17 @@ for i, row in enumerate(test_rows, 1):
     problem        = row["problem_text"]
     active_domains = row["active_domains"]
     gold           = row["gold"]
-    gt             = derive_ground_truth(gold, active_domains)  # Z3 on the gold extraction
     run_id         = row.get("run_id") or uuid.uuid4().hex
+
+    # Setups that still need this problem (all of them unless resuming).
+    todo_baselines  = [b for b in (BASELINE_MODELS if RUN_BASELINE else [])
+                       if not already_done(baseline_label(b), run_id)]
+    todo_model_sets = [ms for ms in MODEL_SETS if not already_done(ms["name"], run_id)]
+    if not todo_baselines and not todo_model_sets:
+        print(f"[{i}/{total_problems}] already done, skipping")
+        continue
+
+    gt             = derive_ground_truth(gold, active_domains)  # Z3 on the gold extraction
 
     print(f"\n[{i}/{total_problems}]")
     print(f"  Problem: {problem}")
@@ -173,7 +208,7 @@ for i, row in enumerate(test_rows, 1):
 
     # Baselines — each run once per problem, not once per model set
     # Baseline results are never logged to the DB, even when LOG_TO_DB is on.
-    for b in (BASELINE_MODELS if RUN_BASELINE else []):
+    for b in todo_baselines:
         label = baseline_label(b)
         t0 = time.time()
         baseline_usage = new_usage()
@@ -203,7 +238,7 @@ for i, row in enumerate(test_rows, 1):
             })
 
     # NS pipeline — once per model set
-    for ms in MODEL_SETS:
+    for ms in todo_model_sets:
         print(f"  --- NS extract [{ms['name']}] ---")
 
         extract_fn = partial(
@@ -347,7 +382,7 @@ total = len(results)
 print(f"\n{'='*60}")
 print(f"TEST SUMMARY  ({'logged to sft_test.db' if LOG_TO_DB else 'DB logging disabled'})")
 print(f"{'='*60}")
-print(f"  Total examples : {total}")
+print(f"  Examples run this session : {total}")
 print()
 
 baseline_labels = [baseline_label(b) for b in BASELINE_MODELS] if RUN_BASELINE else []
@@ -356,15 +391,27 @@ header = f"  {'Model':<{col_w}}  {'Correct':<10}  Accuracy"
 print(header)
 print(f"  {'-'*len(header.strip())}")
 
+def print_accuracy(label: str, count: int, n: int) -> None:
+    pct = (count / n * 100) if n else 0
+    print(f"  {label:<{col_w}}  {f'{count}/{n}':<10}  {pct:.1f}%")
+
+# With demo logging on, count from each setup's file so a resumed run reports every
+# problem in the file, not just the ones run this session.
 for ms in MODEL_SETS:
-    count = sum(1 for r in results if r["ns_results"].get(ms["name"], {}).get("ns_correct") is True)
-    pct = (count / total * 100) if total else 0
-    print(f"  {ms['name']:<{col_w}}  {f'{count}/{total}':<10}  {pct:.1f}%")
+    if LOG_TO_DEMO:
+        rows = load_demo_file(demo_paths[ms["name"]])
+        print_accuracy(ms["name"], sum(1 for r in rows if r["correct"]), len(rows))
+    else:
+        count = sum(1 for r in results if r["ns_results"].get(ms["name"], {}).get("ns_correct") is True)
+        print_accuracy(ms["name"], count, total)
 
 for label in baseline_labels:
-    correct_baseline = sum(1 for r in results if r["baseline_correct"].get(label) is True)
-    pct = (correct_baseline / total * 100) if total else 0
-    print(f"  {label:<{col_w}}  {f'{correct_baseline}/{total}':<10}  {pct:.1f}%")
+    if LOG_TO_DEMO:
+        rows = load_demo_file(demo_paths[label])
+        print_accuracy(label, sum(1 for r in rows if r["correct"]), len(rows))
+    else:
+        count = sum(1 for r in results if r["baseline_correct"].get(label) is True)
+        print_accuracy(label, count, total)
 
 if LOG_TO_DEMO:
     print("\nCompare runs with:")
