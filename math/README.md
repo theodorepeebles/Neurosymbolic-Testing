@@ -32,7 +32,7 @@ fed to the model for one re-translation.
 
 ## Running it
 
-Setup is in the [root README](../README.md).
+Setup is in the [root README](../README.md). The math pipeline also needs Ollama running locally with `qwen3:8b` (`ollama pull qwen3:8b`).
 
 ```
 cd math/pipeline
