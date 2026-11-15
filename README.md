@@ -32,7 +32,7 @@ Output tokens include thinking tokens. "Cost / correct" in brackets is the multi
 
 **Caveats**
 
-- **Chance level:** 72 of the 101 puzzles have two answer choices, so random guessing scores about 45%.
+- **Chance level:** 73 of the 101 puzzles have two answer choices, so random guessing scores about 45%.
 - **Test set:** the puzzles come from the same generator as the training data, so they are in-distribution for the fine-tuned model, but none of the 101 were in its training data. The baseline models answer zero-shot.
 - **Pipeline cost is estimated:** the pipeline runs locally, so it is priced at public API rates for its base models (Qwen3-0.6B on Fireworks, Qwen3-4B on Nebius). Baselines use Ollama Cloud list prices. All prices: [model_specs.txt](logic/data/plots/model_specs.txt).
 
@@ -77,9 +77,9 @@ Output tokens per problem, thinking included:
 
 ## Reproduce the results
 
-> **The fine-tuned model is not on GitHub.** The `SFT_Extraction_Qwen3_0.6b-v4` weights (~610 MB) are excluded from this repo. A fresh clone can rerun the baselines and rebuild every graph and table from the saved results in [logic/data/demo_runs/](logic/data/demo_runs/). To rerun the pipeline itself, you first need to retrain the model with [NS_training.ipynb](logic/pipeline/NS_training.ipynb).
+> **The fine-tuned model is not on GitHub.** The `SFT_Extraction_Qwen3_0.6b-v4` weights (~610 MB) are excluded from this repo. A fresh clone can rerun the baselines and rebuild every graph and table from the saved results in [logic/data/demo_runs/](logic/data/demo_runs/). To rerun the pipeline itself, you first need to retrain the model with [NS_training.ipynb](logic/pipeline/NS_training.ipynb), then import the GGUF file it writes into Ollama under the name the code expects: `ollama create SFT_Extraction_Qwen3_0.6b-v4 -f Modelfile`, with a Modelfile whose `FROM` line points at the GGUF.
 
-Requires Python 3.12.
+Requires Python 3.12 and [Ollama](https://ollama.com) running locally: every model call goes through it. The baselines are Ollama Cloud models, so sign in with `ollama signin`. The pipeline's classifier needs `ollama pull qwen3:4b-q4_K_M`.
 
 ```
 pip install -r requirements.txt
@@ -89,7 +89,6 @@ python plot_results.py   # graphs and tables -> logic/data/plots/
 ```
 
 - In [run.py](logic/pipeline/run.py), set `MODEL_SETS` for the pipeline run, or `RUN_BASELINE = True` with one entry in `BASELINE_MODELS` for each baseline run. Each setup writes one file to [logic/data/demo_runs/](logic/data/demo_runs/). With `RESUME = True`, a stopped run picks up where it left off.
-- Baselines run on Ollama Cloud.
 
 ## Repo layout
 

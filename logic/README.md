@@ -66,15 +66,17 @@ generate → split → train → test → analyse
 
 - **[algorithmic_sft_generator.py](pipeline/algorithmic_sft_generator.py)** builds
   puzzles backwards: the complete satisfying answer is generated first, then every true statement is derived about it,
-  then the clues are trimmed while checking to ensure the puzzle stays valid, then the answer choices are chosen. The
-  model paraphrases the finished json structure into English.
+  then the clues are trimmed while checking to ensure the puzzle stays valid, then the answer choices are chosen. An
+  LLM paraphrases the finished json structure into English. I used Gemini 3.1 Flash Lite to
+  paraphrase; other models work too (set `PARAPHRASE_BACKEND` / `PARAPHRASE_MODEL`).
 - **[split_dataset.py](pipeline/split_dataset.py)** carves the dataset 90/10 into
   `sft_train.jsonl` and `sft_test.jsonl`
 - **NS_training.ipynb** fine-tunes Qwen3-0.6B in Colab on the training half only, splitting
   again internally for validation so training, validation and test stay disjoint.
 - **[run.py](pipeline/run.py)** scores the trained model against the held-out half,
-  comparing its extraction to the known-correct one field by field, and writes a detailed row
-  per puzzle into `sft_test.db`.
+  writing one result line per puzzle to `data/demo_runs/`. With `LOG_TO_DB = True` (off by
+  default), it also compares the model's extraction to the known-correct one field by field
+  and writes a detailed row per puzzle into `sft_test.db`.
 - **[analyze.py](pipeline/analyze.py)** fits a decision tree over those rows to find
   where the model fails most, and **open_debug_viewer.py** renders it as a browsable page.
 
@@ -86,6 +88,9 @@ held-out test split is never uploaded to the training environment.
 
 All from `logic/pipeline/`. A few docstrings still say `python logic/repl.py` from before the
 files moved.
+
+`sft_test.db` is not in the repo. `repl.py`, `chatbox.py`, `analyze.py`, `open_debug_viewer.py`
+and `explanation_debug.py` all read from it, so first run `run.py` with `LOG_TO_DB = True`.
 
 | Command | What it does |
 |---|---|
@@ -105,8 +110,8 @@ Beyond the shared setup in the [root README](../README.md):
 - Extraction uses a fine-tuned Qwen3-0.6B model. In `run.py`, `qwen3:4b-q4_K_M` classifies the
   puzzle type (see [classifier_compare_results.md](pipeline/classifier_compare_results.md));
   the REPL and chatbox still use `qwen3:8b` for classification and free-text questions.
-- **The trained weights are not in this repo.** They're ~610 MB each and excluded from git,
-  so a fresh clone can't run the solver until you obtain them or retrain.
+- **The trained weights are not in this repo.** They're ~610 MB and excluded from git,
+  so a fresh clone can't run the solver until you retrain.
 
 > The extraction system prompt in [prompts.py](pipeline/prompts.py) must stay
 > **byte-identical** to the one in the training script.
