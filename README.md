@@ -61,6 +61,22 @@ The language model only translates the puzzle into structured constraints, and Z
 
 The fine-tuned 0.6B model's weights are not uploaded to GitHub (see [Reproduce the results](#reproduce-the-results)).
 
+## RAG pilot: retrieved examples for the base 0.6B
+
+A separate experiment: can the *base* Qwen3-0.6B, without fine-tuning, extract better if its prompt shows worked examples that look like the puzzle? With `USE_RAG` on, [rag.py](logic/pipeline/rag.py) loads the 915 training puzzles into an in-memory Chroma collection, which embeds each puzzle's text. For each test puzzle it finds the 3 most similar training puzzles and puts them in the extraction prompt, each as puzzle text plus its gold JSON. They replace the prompt's hand-written examples. Retrieval only ever searches the training set.
+
+![RAG vs. no RAG](logic/data/plots/6_rag_vs_no_rag.png)
+
+- **Accuracy:** 16.8% → 26.7% (17 → 27 of 101). Only RAG got 17 puzzles right and only no-RAG got 7 (exact McNemar p = 0.064): a strong trend, just short of significant.
+- **Fewer contradictions:** extractions that Z3 found self-contradictory fell from 30 to 19.
+- **Gains are mostly on single-type puzzles:** 6 → 13 of 27. Puzzles that mix two or three types barely moved (11 → 14 of 74).
+- **Cost:** about 2.8× the input tokens (1,218 → 3,361) and 2× the time per puzzle (7.7 s → 15.4 s).
+- **For scale:** the fine-tuned 0.6B in the main pipeline scores 91.1%.
+
+**Why it seems to help.** A model this small mostly extracts by copying its examples. With the static prompt, the only example is a made-up Alice/Bob/Carol puzzle, and the base model sometimes copies it outright. In one [traced puzzle](logic/data/demo_runs_rag/rag_vs_norag_trace.md), it got every constraint right but reused the example's answer choices ("Bob is in slot 2") and left one person out, which crashed the Z3 step. With RAG, the examples are nearly the same puzzle with different names, so copying their structure gives nearly the right JSON. They also show each puzzle's text next to its JSON, so the model can see how each sentence becomes a constraint. This would also explain why single-type puzzles gain the most: they have close matches in the training set, and mixed puzzles have fewer.
+
+**Caveat:** the test puzzles come from the same generator as the training puzzles, so a close match always exists. This shows RAG helps on puzzles like the training set. It doesn't yet show it helps on puzzles written in other words.
+
 ## More graphs
 
 Accuracy vs. total model size:
@@ -89,6 +105,7 @@ python plot_results.py   # graphs and tables -> logic/data/plots/
 ```
 
 - In [run.py](logic/pipeline/run.py), set `MODEL_SETS` for the pipeline run, or `RUN_BASELINE = True` with one entry in `BASELINE_MODELS` for each baseline run. Each setup writes one file to [logic/data/demo_runs/](logic/data/demo_runs/). With `RESUME = True`, a stopped run picks up where it left off.
+- For the RAG pilot, use the base `qwen3:0.6b` entry in `MODEL_SETS` with `USE_GROUND_TRUTH_DOMAINS = True`, once with `USE_RAG = False` and once with `True`. RAG runs write to [logic/data/demo_runs_rag/](logic/data/demo_runs_rag/). Then `python plot_rag_results.py` draws graph 6.
 
 ## Repo layout
 

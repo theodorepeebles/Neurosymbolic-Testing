@@ -49,6 +49,7 @@ PLOTS_DIR = os.path.normpath(os.path.join(DEMO_DIR, "..", "plots"))
 # Result files skipped by default (passing a file by name still includes it).
 EXCLUDE = {
     "baseline__gpt-oss-20b__think-high.jsonl",   # stopped at 48/101: too slow (4 timeouts)
+    "ns__qwen3-0.6b__cls-gt.jsonl",              # base 0.6B no-RAG run: plotted by plot_rag_results.py
 }
 
 # Colors (reference data-viz palette). The pipeline is the one highlighted series; every
