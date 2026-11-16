@@ -20,6 +20,7 @@ import json
 import os
 
 DEMO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "demo_runs")
+DEMO_RAG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "demo_runs_rag")
 
 COMMON_FIELDS = ["problem_id", "answer", "correct_answer", "correct",
                  "in_tok", "out_tok", "time_ms", "error"]
@@ -56,22 +57,22 @@ def baseline_filename(model: str, think) -> str:
     return f"baseline__{short_name(model)}__{think_tag(think)}.jsonl"
 
 
-def start_demo_file(filename: str) -> str:
+def start_demo_file(filename: str, demo_dir: str = DEMO_DIR) -> str:
     """Create (or empty) a run's file so a rerun doesn't mix with old results. Returns its path."""
-    os.makedirs(DEMO_DIR, exist_ok=True)
-    path = os.path.join(DEMO_DIR, filename)
+    os.makedirs(demo_dir, exist_ok=True)
+    path = os.path.join(demo_dir, filename)
     open(path, "w", encoding="utf-8").close()
     return path
 
 
-def resume_demo_file(filename: str) -> tuple[str, set]:
+def resume_demo_file(filename: str, demo_dir: str = DEMO_DIR) -> tuple[str, set]:
     """Open a run's file for resuming: keep its results and return (path, problem_ids already done).
 
     A run stopped with Ctrl+C can leave a half-written last line; any line that isn't valid
     JSON is dropped (and the file rewritten without it) so that problem is simply run again.
     """
-    os.makedirs(DEMO_DIR, exist_ok=True)
-    path = os.path.join(DEMO_DIR, filename)
+    os.makedirs(demo_dir, exist_ok=True)
+    path = os.path.join(demo_dir, filename)
     if not os.path.exists(path):
         open(path, "w", encoding="utf-8").close()
         return path, set()
