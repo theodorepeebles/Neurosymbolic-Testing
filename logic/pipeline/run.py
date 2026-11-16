@@ -25,7 +25,7 @@ from pricing import cost
 from validators import build_hybrid_schema
 from logger import init_db, log_attempt
 from demo_logger import (start_demo_file, resume_demo_file, load_demo_file, log_demo,
-                         pipeline_filename, baseline_filename)
+                         pipeline_filename, baseline_filename, DEMO_DIR, DEMO_RAG_DIR)
 import eval_metrics
 import attribution
 
@@ -38,7 +38,12 @@ RUN_BASELINE = True
 # True: skip the classifier and feed each problem's ground-truth active_domains
 # (from sft_test.jsonl) into the pipeline, so domains are always correct.
 # False: predict domains at runtime with each MODEL_SETS entry's classifier_llm.
-USE_GROUND_TRUTH_DOMAINS = False
+USE_GROUND_TRUTH_DOMAINS = True
+
+# True: non-finetuned extraction models get the 3 most similar training puzzles (with gold
+# JSON) as prompt examples instead of the static ones (see rag.py). Fine-tuned models are
+# unaffected. RAG runs are saved to data/demo_runs_rag/ with a -RAG suffix.
+USE_RAG = True
 
 # Direct-LLM baselines, each run once per problem (not tied to a MODEL_SETS entry).
 # "think": True = thinking on, False = off. gpt-oss can't turn thinking off; it ignores
@@ -71,12 +76,12 @@ RESUME = True
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "sft_test.jsonl")
 
 MODEL_SETS = [
-    # {
-    #     "name": "qwen3:0.6b",
-    #     "classifier_llm": "qwen3:8b",
-    #     "extraction_llm": "qwen3:0.6b",
-    #     "formatting_llm": "qwen3:8b",
-    # },
+    {
+        "name": "qwen3:0.6b",
+        "classifier_llm": "qwen3:8b",
+        "extraction_llm": "qwen3:0.6b",
+        "formatting_llm": "qwen3:8b",
+    },
     # Commented out for baseline-only runs, so the pipeline isn't rerun and its results file isn't emptied.
     #   {
     #     "name": "SFT_Extraction_Qwen3_0.6b-v4",
@@ -90,6 +95,10 @@ MODEL_SETS = [
 # Models extracted with finetuned=True (minimal FT_EXTRACTION_SYSTEM prompt, raw JSON).
 # All others use the default rich domain-specific prompt with examples.
 FINETUNED_MODELS = {"SFT_Extraction_Qwen3_0.6b-v4"}
+
+
+def uses_rag(ms: dict) -> bool:
+    return USE_RAG and ms["extraction_llm"] not in FINETUNED_MODELS
 
 
 def load_test_set(path: str, limit=None) -> list[dict]:
@@ -156,16 +165,18 @@ if LOG_TO_DB:
 demo_paths = {}
 done_ids = {}
 
-def open_demo(label: str, filename: str) -> None:
+def open_demo(label: str, filename: str, demo_dir: str = DEMO_DIR) -> None:
     if RESUME:
-        demo_paths[label], done_ids[label] = resume_demo_file(filename)
+        demo_paths[label], done_ids[label] = resume_demo_file(filename, demo_dir)
     else:
-        demo_paths[label], done_ids[label] = start_demo_file(filename), set()
+        demo_paths[label], done_ids[label] = start_demo_file(filename, demo_dir), set()
 
 if LOG_TO_DEMO:
     for ms in MODEL_SETS:
         cls = None if USE_GROUND_TRUTH_DOMAINS else ms["classifier_llm"]
-        open_demo(ms["name"], pipeline_filename(ms.get("short") or ms["name"], cls))
+        name = (ms.get("short") or ms["name"]) + ("-RAG" if uses_rag(ms) else "")
+        open_demo(ms["name"], pipeline_filename(name, cls),
+                  DEMO_RAG_DIR if uses_rag(ms) else DEMO_DIR)
     if RUN_BASELINE:
         for b in BASELINE_MODELS:
             open_demo(baseline_label(b), baseline_filename(b["model"], b["think"]))
@@ -245,6 +256,7 @@ for i, row in enumerate(test_rows, 1):
             extract_logic_problem,
             model=ms["extraction_llm"],
             finetuned=ms["extraction_llm"] in FINETUNED_MODELS,
+            rag=uses_rag(ms),
         )
 
         error_tb = None

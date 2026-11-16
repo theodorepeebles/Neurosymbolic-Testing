@@ -9,3 +9,4 @@ openai==2.37.0
 names==0.3.0
 numpy==2.5.4
 matplotlib==3.11.2
+chromadb==1.5.9

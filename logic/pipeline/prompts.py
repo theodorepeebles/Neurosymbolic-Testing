@@ -219,26 +219,33 @@ def build_freetext_repl_prompt(problem_text: str, variables_block: str, question
 
 # --- Builder ---
 # only used for the non-finetuned models
-def build_extraction_prompt(active_domains: list[str]) -> str:
+def build_extraction_prompt(active_domains: list[str], examples: list[tuple[str, str]] | None = None) -> str:
     key = frozenset(active_domains)
 
-    if key in EXAMPLE_JSONS:
-        # exact match — single example
-        examples = [EXAMPLE_JSONS[key]]
+    if examples:
+        # RAG: retrieved (problem_text, gold JSON) pairs replace the static examples
+        examples_block = "\n\n".join(
+            f"Example {i + 1}:\nPuzzle:\n{text}\n\nJSON:\n{json_str}"
+            for i, (text, json_str) in enumerate(examples)
+        )
     else:
-        # no hybrid example — show one primitive per active domain
-        # every constraint type and wrapper gets demonstrated from whichever
-        # single-domain examples are relevant; rules carry the composition logic
-        examples = [
-            EXAMPLE_JSONS[frozenset([d])]
-            for d in active_domains
-            if frozenset([d]) in EXAMPLE_JSONS
-        ]
+        if key in EXAMPLE_JSONS:
+            # exact match — single example
+            static_examples = [EXAMPLE_JSONS[key]]
+        else:
+            # no hybrid example — show one primitive per active domain
+            # every constraint type and wrapper gets demonstrated from whichever
+            # single-domain examples are relevant; rules carry the composition logic
+            static_examples = [
+                EXAMPLE_JSONS[frozenset([d])]
+                for d in active_domains
+                if frozenset([d]) in EXAMPLE_JSONS
+            ]
 
-    examples_block = "\n\n".join(
-        f"Example {i + 1}:\n{json.dumps(ex, indent=2)}"
-        for i, ex in enumerate(examples)
-    )
+        examples_block = "\n\n".join(
+            f"Example {i + 1}:\n{json.dumps(ex, indent=2)}"
+            for i, ex in enumerate(static_examples)
+        )
 
     domain_rules = "\n\n".join(DOMAIN_RULES[d] for d in active_domains)
 

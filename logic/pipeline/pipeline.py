@@ -18,11 +18,13 @@ def new_usage() -> dict:
     return {"in_tok": 0, "out_tok": 0, "thinking_chars": 0}
 
 
-def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool | str = False, timeout: int = 300, is_extraction: bool = False, usage: dict | None = None) -> str:
+def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think: bool | str = False, timeout: int = 300, is_extraction: bool = False, usage: dict | None = None, num_ctx: int = 4096) -> str:
     """
     POSTs prompt to Ollama's local HTTP server.
     If `usage` (from new_usage()) is given, this call's input/output tokens are added to it
     (output tokens include thinking tokens).
+    num_ctx (extraction calls only): context window. Ollama silently drops the start of
+    prompts that overflow it, so RAG extraction raises it to fit the retrieved examples.
     Returns:
         the stripped LLM response.
     """
@@ -40,7 +42,7 @@ def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think:
             "temperature": 0,
             "top_k": 1,
             "num_predict": 1024,
-            "num_ctx": 4096,
+            "num_ctx": num_ctx,
         }
     if fmt:
         body["format"] = fmt
@@ -112,6 +114,7 @@ def extract_logic_problem(
     unsat_context: str = None,
     finetuned: bool = False,
     usage: dict | None = None,
+    rag: bool = False,
 ) -> tuple:
     """
     Extract a logic puzzle into a LogicProblem via the LLM, with schema-validation retry.
@@ -122,6 +125,8 @@ def extract_logic_problem(
     constraints that force output to start with '{', so fences/preamble can't occur).
     finetuned=False (default) uses the rich domain-specific prompt with examples and
     strips markdown fences before parsing (cloud-routed models may wrap output).
+    rag=True (non-finetuned only) replaces the prompt's static examples with the 3 most
+    similar training puzzles (see rag.py) and raises the context window to fit them.
     """
 
     unmatched_errors = []
@@ -132,8 +137,13 @@ def extract_logic_problem(
         base_prompt = (f"Active domains: {', '.join(active_domains)}\n\n"
                        f"Extract this logic puzzle:\n\n{problem_text}")
     else:
-        extraction_system = build_extraction_prompt(active_domains)
+        examples = None
+        if rag:
+            import rag as rag_retrieval   # lazy: chromadb is only needed for RAG runs
+            examples = rag_retrieval.retrieve(problem_text)
+        extraction_system = build_extraction_prompt(active_domains, examples)
         base_prompt = f"Extract this logic puzzle:\n\n{problem_text}"
+    num_ctx = 8192 if (rag and not finetuned) else 4096
     prompt = f"{unsat_context}\n\n{base_prompt}" if unsat_context else base_prompt
 
     schema = LogicProblem.model_json_schema()
@@ -149,7 +159,7 @@ def extract_logic_problem(
         # may still wrap output in markdown fences or add prose. Strip fences before
         # json.loads (see `cleaned` below). This is not documented by Ollama explicitly;
         # confirmed empirically by observing fence-wrapped responses from cloud models.
-        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model, is_extraction=True, usage=usage)
+        raw = ask_llm(prompt=prompt, system=extraction_system, fmt=schema, model=model, is_extraction=True, usage=usage, num_ctx=num_ctx)
         last_raw = raw
         attempts_used += 1
 
