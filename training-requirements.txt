@@ -1,0 +1,22 @@
+# Packages used by logic/pipeline/NS_training.ipynb (for reference only).
+# The notebook runs on Google Colab with a GPU and installs these itself;
+# you don't need to install this file to run the notebook.
+# The notebook doesn't pin versions, so neither does this file.
+
+# Fine-tuning (installed by: pip install "unsloth[colab-new] @ git+...")
+unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
+torch
+transformers
+trl
+peft
+datasets
+
+# Saving the merged model
+torchao>=0.16.0
+
+# Checking extractions
+z3-solver
+pydantic
+
+# GGUF export: the notebook also clones llama.cpp and installs its
+# requirements.txt to run convert_hf_to_gguf.py.
