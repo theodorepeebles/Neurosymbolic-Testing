@@ -1,6 +1,10 @@
 # Neurosymbolic Testing
 
-**[Live demo](https://ns-logic-demo-ncmfaambza-uc.a.run.app)**: an animated replay of the pipeline solving 10 test puzzles, step by step.
+## ▶ [Try the live demo](https://ns-logic-demo-ncmfaambza-uc.a.run.app)
+
+Watch the pipeline solve 10 test puzzles step by step: each sentence becomes a formal rule, and the solver proves every answer choice right or wrong.
+
+---
 
 **A fine-tuned 0.6B extractor + Z3 solver (with a 4B puzzle-type classifier) scores 91.1% on 101 held-out logic puzzles, beating gpt-oss-120b at low reasoning (78.2%, p = 0.004) at 2.8× lower cost per correct answer.**
 
