@@ -1,6 +1,6 @@
 # Neurosymbolic Testing
 
-## ▶ [Try the live demo](https://ns-logic-demo-ncmfaambza-uc.a.run.app)
+## ▶ [Live demo](https://ns-logic-demo-ncmfaambza-uc.a.run.app)
 
 Watch the pipeline solve 10 test puzzles step by step: each sentence becomes a formal rule, and the solver proves every answer choice right or wrong.
 
