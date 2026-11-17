@@ -13,4 +13,5 @@ gcloud run deploy ns-logic-demo \
   --memory 1Gi \
   --min-instances 0 \
   --max-instances 1 \
+  --timeout 60 \
   --set-env-vars HOST=0.0.0.0
