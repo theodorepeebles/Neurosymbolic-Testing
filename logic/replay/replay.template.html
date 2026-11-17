@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Neurosymbolic logic solver: replay</title>
+<meta name="description" content="Watch a 0.6B language model turn a logic puzzle into formal rules, and Z3 prove each answer choice right or wrong.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23111'/%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+:root{
+  --ink:#111; --muted:#666; --faint:#9b9b9b; --line:#e4e4e4; --soft:#f6f6f6; --bg:#fff;
+  /* The only three accent colors. green = satisfied/confirmed, red = eliminated/conflict,
+     yellow = in progress/under test. */
+  --green:#12803c; --green-bg:#e4f4e9;
+  --red:#c5221f;   --red-bg:#fdeae9;
+  --yellow:#f0bf00; --yellow-bg:#fff3bf;
+  --speed:.625;   /* playback rate: the 1x button is .625, the 2x button is 1.25 */
+  --t:calc(240ms / var(--speed));
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --bar-h:104px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);overflow-x:hidden}
+button{font:inherit;color:inherit}
+code,pre{font-family:var(--mono)}
+a{color:inherit}
+.wrap{max-width:1360px;margin:0 auto;padding:0 16px}
+
+/* ── header ── */
+.top{padding:18px 0 10px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;align-items:start}
+.top h1{margin:0;font-size:20px;line-height:1.25;letter-spacing:-.01em}
+.top .tagline{margin:4px 0 0;color:var(--muted);max-width:62ch}
+.top .gh{font-size:13.5px;white-space:nowrap;text-underline-offset:3px;padding-top:3px}
+.top .facts{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--ink);border-radius:999px;padding:2px 10px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:var(--ink)}
+.headline{font-size:13px;color:var(--muted)}
+.headline b{color:var(--ink)}
+
+/* ── example picker ── */
+.picker{display:flex;gap:4px;margin:8px 0 6px}
+.picker button{flex:1 1 0;min-width:0;height:38px;border:1px solid var(--line);background:var(--bg);border-radius:6px;font-weight:600;font-size:14px;cursor:pointer;position:relative;transition:background-color .15s,border-color .15s}
+.picker button:hover{border-color:var(--ink)}
+.picker button[aria-current="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.picker button.wrong{color:var(--red);border-color:var(--red)}
+.picker button.wrong[aria-current="true"]{background:var(--red);color:#fff}
+.picker button.wrong::after{content:"✕";position:absolute;top:1px;right:4px;font-size:9px;font-weight:700}
+.picker{flex-wrap:wrap}
+.picker button{min-width:28px}
+.picker button.res{flex:0 0 auto;padding:0 14px;white-space:nowrap}
+
+/* ── full results page (static) ── */
+#fullResults{display:none;max-width:980px;padding-bottom:40px}
+.view-results #fullResults{display:block}
+.view-results #main,.view-results #exline,.view-results .bar,.view-results #links,.view-results .foot{display:none}
+#fullResults h2{font-size:20px;margin:14px 0 8px}
+#fullResults h3{font-size:16px;margin:30px 0 8px}
+#fullResults p,#fullResults li{max-width:78ch}
+#fullResults .lead{font-size:16.5px;line-height:1.5}
+#fullResults ul{padding-left:20px;margin:6px 0}
+#fullResults li{margin:6px 0}
+#fullResults figure{margin:16px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+#fullResults figure img{display:block;width:100%;height:auto}
+#fullResults figcaption{font-size:12.5px;color:var(--muted);padding:6px 10px;border-top:1px solid var(--line)}
+#fullResults .small{font-size:12.5px;color:var(--muted)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+.tablewrap table{border-collapse:collapse;width:100%;font-size:13px;white-space:nowrap}
+.tablewrap th,.tablewrap td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line)}
+.tablewrap th:first-child,.tablewrap td:first-child{text-align:left}
+.tablewrap th{font-size:11.5px;color:var(--muted);font-weight:600;background:var(--soft)}
+.tablewrap tr:last-child td{border-bottom:0}
+.tablewrap tr.us td{font-weight:700;background:var(--soft)}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0;font-size:13px}
+.flow span{border:1px solid var(--line);border-radius:6px;padding:4px 9px}
+.flow i{font-style:normal;color:var(--faint)}
+.exline{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;color:var(--muted);margin-bottom:10px;min-height:20px}
+.exline b{color:var(--ink)}
+.exline .bad{color:var(--red);font-weight:600}
+
+/* ── layout: one column on phones, two from 720px, three from 1100px ── */
+main{display:block;padding-bottom:calc(var(--bar-h) + 28px)}
+.colA,.colB,.colC{display:contents}
+.puzzle{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:8px 0 8px;margin-bottom:12px}
+.ptext{max-height:30vh;overflow:auto;position:relative;white-space:pre-wrap;font-size:14.5px;line-height:1.75;overscroll-behavior:contain}
+.label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 4px}
+@media (min-width:720px){
+  main{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:0 28px;align-items:start}
+  .colA{display:block;position:sticky;top:12px;max-height:calc(100vh - var(--bar-h) - 24px);overflow:auto}
+  .colB,.colC{display:block;grid-column:2}
+  .puzzle{position:static;border-bottom:0;padding-top:0}
+  .ptext{max-height:none;overflow:visible;font-size:15px}
+}
+@media (min-width:1100px){
+  main{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.08fr);gap:0 30px}
+  .colB{grid-column:2;position:sticky;top:12px;max-height:calc(100vh - var(--bar-h) - 24px);overflow:auto;padding-right:2px}
+  .colC{grid-column:3}
+}
+
+/* ── puzzle text spans ── */
+.seg{border-radius:2px;transition:background-color var(--t),box-shadow var(--t)}
+.seg.lk{box-shadow:inset 0 -1.5px 0 #cfcfcf}
+.seg.m-link,.seg.m-test{background:var(--yellow-bg);box-shadow:inset 0 -2px 0 var(--yellow)}
+.seg.m-conflict{background:var(--red-bg);box-shadow:inset 0 -2px 0 var(--red)}
+.seg.m-flash{background:var(--green-bg);box-shadow:inset 0 -2px 0 var(--green)}
+.seg.m-focus{background:var(--yellow-bg);box-shadow:inset 0 -2px 0 var(--yellow)}   /* hovered */
+.sweeping .seg{animation:sweep calc(620ms / var(--speed)) both;animation-delay:calc(var(--d) * 1300ms / var(--speed))}
+@keyframes sweep{0%{background:transparent}35%{background:var(--yellow-bg)}100%{background:transparent}}
+
+/* ── stages ── */
+.stage{display:none;margin:0 0 22px}
+.stage.on{display:block}
+.enter{animation:rise calc(320ms / var(--speed)) both}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.stage h2{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+.stage h2 .num{width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;display:grid;place-items:center;flex:none}
+.meta{font:11.5px/1.5 var(--mono);color:var(--muted);margin:3px 0 0 30px;overflow-wrap:anywhere}
+.say{margin:6px 0 8px;color:var(--muted);font-size:13.5px}
+.hide{display:none}
+.hide.on{display:block}
+.note{font-size:13.5px;margin:8px 0 0}
+.note.good{color:var(--green)} .note.bad{color:var(--red)}
+.note code,.say code,.diff code{font-size:12.5px}
+
+.domains{display:flex;flex-wrap:wrap;gap:6px}
+.dom{border:1.5px dashed var(--line);border-radius:999px;padding:3px 12px;font-size:13.5px;color:var(--faint);transition:all var(--t)}
+.dom.cand{border-color:var(--yellow);background:var(--yellow-bg);color:var(--ink)}
+.dom.picked{border:1.5px solid var(--ink);background:var(--ink);color:#fff;font-weight:600}
+.dom.extra{border-color:var(--red);background:var(--red);color:#fff}
+
+.types{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}
+.types code{font-size:11.5px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--muted)}
+.types code.plus{border-style:dashed}
+.ents{font-size:13px;color:var(--muted);margin:0 0 8px}
+.ents b{color:var(--ink);font-weight:600}
+
+/* ── rules ── */
+.rules{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.rules .grp{display:none;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:6px}
+.rules .grp.on{display:block}
+.rule{display:none;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:start;padding:5px 8px;border:1px solid var(--line);border-radius:6px;transition:background-color var(--t),border-color var(--t)}
+.rule.on{display:grid}
+.rule .ix{font:11px/20px var(--mono);color:var(--faint)}
+.rule code,.fr{font:12.5px/1.55 var(--mono);overflow-wrap:anywhere}
+.rule code{display:block}   /* the wipe-in clips an inline box to its first line */
+.fr b{font-weight:700}
+.rule .qt{display:block;font-size:11px;color:var(--muted)}
+.rule .side{display:flex;align-items:center;gap:6px;padding-top:1px}
+.tag{font-size:10.5px;line-height:1.5;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 6px;white-space:nowrap}
+.ck{width:16px;height:16px;flex:none;opacity:0;transition:opacity var(--t)}
+.ck path{fill:none;stroke:var(--green);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.rule.enter code{animation:wipe calc(360ms / var(--speed)) steps(20) both}
+@keyframes wipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+.rule.ok{border-color:var(--green)} .rule.ok .ck{opacity:1}
+.rule.bad{border-color:var(--red)}
+.rule.m-link,.rule.m-test{background:var(--yellow-bg);border-color:var(--yellow)}
+.rule.m-flash{background:var(--green-bg);border-color:var(--green)}
+.rule.m-conflict{background:var(--red-bg);border-color:var(--red)}
+.rule.m-focus{background:var(--yellow-bg);border-color:var(--yellow)}
+.rule.differs{border-color:var(--red)}
+.rule.differs .tag.gold{color:var(--red);border-color:var(--red)}
+.legend{font-size:12px;color:var(--muted);margin:8px 0 0}
+details.raw{margin-top:8px;font-size:12.5px}
+details.raw summary{cursor:pointer;color:var(--muted)}
+details.raw pre{margin:6px 0 0;padding:8px;background:var(--soft);border-radius:6px;font-size:11.5px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+
+/* ── solution lanes ── */
+.lane{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px}
+.lane .lane-lab{flex:0 0 100%;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.cell{border:1px solid var(--line);border-radius:6px;padding:3px 8px;display:flex;gap:6px;align-items:baseline;min-height:28px}
+.cell .k{font:11px var(--mono);color:var(--faint);white-space:nowrap}
+.cell .vals{display:flex;flex-wrap:wrap;gap:0 6px}
+.nm{font-size:13.5px;font-weight:600;border-radius:3px;padding:0 2px;transition:opacity var(--t),background-color var(--t),color var(--t)}
+.nm.pend{opacity:0}
+.nm.free{font-weight:400;color:var(--muted)}
+.nm.hit-red{background:var(--red-bg);color:var(--red);font-weight:700}
+.nm.hit-green{background:var(--green-bg);color:var(--green);font-weight:700}
+.pips{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0 4px}
+.pip{width:20px;height:20px;border:1px solid var(--line);border-radius:4px;font:10px/18px var(--mono);text-align:center;color:var(--faint);transition:all var(--t)}
+.pip.m-flash{background:var(--yellow-bg);border-color:var(--yellow);color:var(--ink)}
+.pip.ok{background:var(--green);border-color:var(--green);color:#fff}
+.pip.bad{background:var(--red);border-color:var(--red);color:#fff}
+.pip.m-focus{outline:2px solid var(--yellow);outline-offset:1px}
+
+/* ── answer choices ── */
+.choices{display:grid;gap:8px}
+.choice{border:1px solid var(--line);border-radius:8px;padding:9px 11px;transition:border-color var(--t),box-shadow var(--t),background-color var(--t)}
+.choice .head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;transition:background-color var(--t)}
+.choice .lab{width:24px;height:24px;border-radius:50%;border:1.5px solid var(--ink);display:grid;place-items:center;font-weight:700;font-size:13px;flex:none;transition:all var(--t)}
+.choice .verdict{margin-left:auto;font-size:12px;font-weight:700;white-space:nowrap}
+.choice.testing{border-color:var(--yellow);box-shadow:0 0 0 1px var(--yellow);background:#fffbe8}
+.choice.testing .verdict{color:var(--ink)}
+.choice.confirmed{border-color:var(--green);box-shadow:0 0 0 1px var(--green)}
+.choice.confirmed .lab{background:var(--green);border-color:var(--green);color:#fff}
+.choice.confirmed .verdict{color:var(--green)}
+.choice.eliminated{border-color:var(--red)}
+.choice.eliminated .lab{border-color:var(--red);color:var(--red)}
+.choice.eliminated .verdict{color:var(--red)}
+.choice.eliminated .head .fr{text-decoration:line-through;text-decoration-color:var(--red);color:var(--muted)}
+.choice .ln{display:none;font-size:13px;margin:7px 0 0}
+.choice .ln.on{display:block}
+.choice .ask{color:var(--muted)}
+.choice .z3 b{font-family:var(--mono);font-size:12.5px}
+.choice .proof p{margin:0 0 6px}
+.mus{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
+.mus li{border:1px solid var(--red);background:var(--red-bg);border-radius:5px;padding:1px 7px;transition:all var(--t)}
+.mus li .fr{font-size:12px}
+.choice.confirmed.settled .mus li{border-color:var(--green);background:var(--green-bg)}
+.mus li.m-focus{outline:2px solid var(--yellow);outline-offset:1px}
+.choice .head.m-focus{background:var(--yellow-bg);border-radius:4px}
+.mus li.builtin{border-style:dashed}
+details.alts{margin-top:6px;font-size:12px;color:var(--muted)}
+details.alts summary{cursor:pointer}
+details.alts ul{margin:4px 0 0;padding-left:18px}
+details.alts .fr{font-size:11.5px}
+.goldtag{font-size:10.5px;border:1px solid var(--ink);border-radius:999px;padding:0 7px;font-weight:600;white-space:nowrap}
+
+/* ── result ── */
+.result{display:none;border-radius:8px;padding:12px 14px;margin-top:12px;border:1.5px solid var(--ink)}
+.result.on{display:block}
+.result.good{border-color:var(--green);background:var(--green-bg)}
+.result.bad{border-color:var(--red);background:var(--red-bg)}
+.result .big{font-size:19px;font-weight:700;line-height:1.3}
+.result.good .big{color:var(--green)} .result.bad .big{color:var(--red)}
+.result p{margin:4px 0 0;font-size:13.5px}
+.diff{display:none;margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:11px 13px;font-size:13.5px}
+.diff.on{display:block}
+.diff h3{margin:0 0 6px;font-size:14px}
+.diff ol{margin:0;padding-left:20px}
+.diff li{margin:5px 0}
+.diff .was{color:var(--red);font-weight:600}
+.diff .q{color:var(--muted)}
+
+/* ── source links (svg overlay) ── */
+#links{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:6;overflow:visible}
+#links path{fill:none;stroke-width:1.75;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset calc(300ms / var(--speed)) ease-out}
+#links path.drawn{stroke-dashoffset:0}
+#links .y{stroke:var(--yellow)} #links .r{stroke:var(--red)} #links .n{stroke:var(--ink)}
+
+/* ── control bar ── */
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--bg);border-top:1px solid var(--line);padding:8px 0 calc(8px + env(safe-area-inset-bottom))}
+.prog{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px}
+.prog .st{font-size:11px;color:var(--faint);min-width:0;border:0;background:none;padding:0 0 2px;text-align:left;cursor:pointer;border-radius:3px}
+.prog .st:hover{color:var(--ink)}
+.prog .st:hover .tr{background:#cfcfcf}
+.prog .st span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog .tr{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:3px}
+.prog .fill{height:100%;width:0;background:var(--ink);transition:width var(--t) linear}
+.prog .st.active{color:var(--ink);font-weight:600}
+.prog .st.active .fill{background:var(--yellow)}
+.prog .st.done{color:var(--muted)}
+.ctl{display:flex;align-items:center;gap:6px}
+.ctl .sp{flex:1}
+.btn{height:40px;min-width:40px;padding:0 10px;border:1px solid var(--line);background:var(--bg);border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;font-weight:600;white-space:nowrap;transition:background-color .15s,border-color .15s}
+.btn:hover{border-color:var(--ink)}
+.btn svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn[disabled]{opacity:.35;cursor:default;border-color:var(--line)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.speed{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.speed button{height:38px;min-width:34px;padding:0 6px;border:0;background:var(--bg);cursor:pointer;font-size:13px;font-weight:600}
+.speed button[aria-pressed="true"]{background:var(--ink);color:#fff}
+@media (max-width:560px){
+  .btn .t{display:none} .btn.keep .t{display:inline}
+  .btn{padding:0 9px}
+  /* one speed button that switches between 1x and 2x */
+  .speed button[aria-pressed="false"]{display:none}
+  .speed button{min-width:44px}
+  /* choice header: label, type and verdict on one row, the rule under them */
+  .choice .head .fr{order:3;flex-basis:100%}
+}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+.foot{color:var(--muted);font-size:12px;border-top:1px solid var(--line);margin-top:8px;padding:12px 0 calc(var(--bar-h) + 24px)}
+.foot p{margin:0 0 6px;max-width:92ch}
+.err{color:var(--red);font-size:13.5px;padding:12px 0}
+
+/* A skip applies many steps at once: no transitions while that happens. */
+.instant *{transition:none !important}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none !important;animation:none !important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Neurosymbolic logic solver</h1>
+      <p class="tagline">A small language model translates each puzzle into formal rules. A solver (Z3) does the reasoning and proves every answer choice right or wrong.</p>
+    </div>
+    <a class="gh" href="https://github.com/theodorepeebles/Neurosymbolic-Testing" target="_blank" rel="noopener">GitHub ↗</a>
+    <div class="facts">
+      <span class="chip" id="srcChip"><span class="dot"></span><span id="srcText">Replay of a test example</span></span>
+      <span class="headline"><b>91.1%</b> on 101 held-out puzzles · 0.6B extractor + 4B classifier + Z3</span>
+    </div>
+  </header>
+
+  <nav class="picker" id="picker" aria-label="Examples"></nav>
+  <div class="exline" id="exline"></div>
+
+  <main id="main">
+    <div class="colA">
+      <section class="puzzle" id="puzzle" aria-label="Puzzle text">
+        <p class="label">Puzzle</p>
+        <div class="ptext" id="ptext"></div>
+      </section>
+      <section class="stage" id="s0">
+        <h2><span class="num">1</span>Classify</h2>
+        <p class="meta" id="m0"></p>
+        <p class="say">The classifier reads the puzzle and picks which puzzle types it uses.</p>
+        <div class="domains" id="domains"></div>
+        <p class="note hide" id="clsNote"></p>
+      </section>
+    </div>
+    <div class="colB" id="colB">
+      <section class="stage" id="s1">
+        <h2><span class="num">2</span>Extract</h2>
+        <p class="meta" id="m1"></p>
+        <p class="say">The fine-tuned model writes each sentence as a formal rule. Its output is limited to the rule types for the puzzle types above:</p>
+        <div class="types" id="types"></div>
+        <p class="ents" id="ents"></p>
+        <ol class="rules" id="rules"></ol>
+        <p class="legend hide" id="legend"></p>
+        <details class="raw hide" id="raw"><summary>Raw model output</summary><pre id="rawPre"></pre></details>
+      </section>
+    </div>
+    <div class="colC">
+      <section class="stage" id="s2">
+        <h2><span class="num">3</span>Solve</h2>
+        <p class="meta" id="m2"></p>
+        <p class="say" id="say2">Z3 looks for one arrangement that satisfies every rule, then each rule is checked against it.</p>
+        <div id="board"></div>
+        <p class="legend hide" id="freeNote">Bold = forced by the rules. Grey = free: other valid arrangements exist.</p>
+        <div class="hide" id="pipsWrap"><div class="pips" id="pips"></div></div>
+        <p class="note hide" id="solveSum"></p>
+      </section>
+      <section class="stage" id="s3">
+        <h2><span class="num">4</span>Test each answer choice</h2>
+        <p class="meta" id="m3"></p>
+        <p class="say">For each choice, Z3 assumes the choice (or its opposite) and asks whether every rule can still hold.</p>
+        <div class="choices" id="choices"></div>
+        <div class="result" id="result"></div>
+        <div class="diff" id="diff"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Static copy of the benchmark write-up in the repo's README. Update both together. -->
+  <!-- The id is not "results" on purpose: the URL is #results, and a matching id would make the browser scroll past the header. -->
+  <section id="fullResults" aria-label="Full results">
+    <h2>Full results</h2>
+    <p class="lead"><b>A fine-tuned 0.6B extractor + Z3 solver (with a 4B puzzle-type classifier) scores 91.1% on 101 held-out logic puzzles, beating gpt-oss-120b at low reasoning (78.2%, p = 0.004) at 2.8× lower cost per correct answer.</b></p>
+    <figure><img src="/plots/5_accuracy_and_cost.png" alt="Bar charts of accuracy and cost per problem for the pipeline and seven baseline setups" loading="lazy"></figure>
+    <figure><img src="/plots/1_accuracy_vs_cost.png" alt="Scatter plot of accuracy against cost per problem" loading="lazy"></figure>
+
+    <h3>Results</h3>
+    <p>101 held-out logic puzzles (ordering, grouping, knights and knaves). The baseline models answer each puzzle directly.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Model · reasoning</th><th>Params (active)</th><th>Accuracy</th><th>Correct</th><th>Avg tokens in / out</th><th>Cost / problem</th><th>Cost / correct</th><th>p vs. pipeline</th></tr></thead>
+        <tbody>
+          <tr><td>nemotron-3-nano-30b · on</td><td>31.6B (3.2B)</td><td>99.0%</td><td>100 / 101</td><td>277 / 20,520</td><td>$0.0049</td><td>$0.0050 (32×)</td><td>0.021</td></tr>
+          <tr><td>gpt-oss-120b · high</td><td>117B (5.1B)</td><td>98.0%</td><td>99 / 101</td><td>331 / 8,143</td><td>$0.0049</td><td>$0.0050 (32×)</td><td>0.039</td></tr>
+          <tr><td>nemotron-3-super · on</td><td>120.6B (12.7B)</td><td>97.0%</td><td>98 / 101</td><td>277 / 5,943</td><td>$0.0036</td><td>$0.0037 (24×)</td><td>0.146</td></tr>
+          <tr><td>gemma4-31b · off</td><td>31B (dense)</td><td>92.1%</td><td>93 / 101</td><td>272 / 856</td><td>$0.00038</td><td>$0.00041 (2.7×)</td><td>1.000</td></tr>
+          <tr class="us"><td>NS pipeline</td><td>0.6B + 4B</td><td>91.1%</td><td>92 / 101</td><td>639 / 770</td><td>$0.00014</td><td>$0.00016</td><td>—</td></tr>
+          <tr><td>gemma4-31b · on</td><td>31B (dense)</td><td>88.1%</td><td>89 / 101</td><td>270 / 6,888</td><td>$0.0028</td><td>$0.0032 (20×)</td><td>0.629</td></tr>
+          <tr><td>gpt-oss-120b · low</td><td>117B (5.1B)</td><td>78.2%</td><td>79 / 101</td><td>331 / 476</td><td>$0.00034</td><td>$0.00043 (2.8×)</td><td>0.004</td></tr>
+          <tr><td>gpt-oss-20b · low</td><td>21B (3.6B)</td><td>69.3%</td><td>70 / 101</td><td>331 / 531</td><td>$0.00018</td><td>$0.00026 (1.7×)</td><td>&lt;0.001</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">Output tokens include thinking tokens. "Cost / correct" in brackets is the multiple of the pipeline's. The p-value is an exact McNemar test on the same 101 puzzles; below 0.05 means the gap is unlikely to be chance. Full table with 95% intervals: <a href="https://github.com/theodorepeebles/Neurosymbolic-Testing/blob/main/logic/data/plots/results.txt" target="_blank" rel="noopener">results.txt</a>.</p>
+
+    <h3>Reading the results</h3>
+    <ul>
+      <li><b>Where the pipeline wins:</b> it beats gpt-oss-120b (low) and gpt-oss-20b (low), both by a significant margin. It is statistically tied with gemma4-31b, with thinking on or off, at 2.7–20× lower cost per correct answer.</li>
+      <li><b>Where bigger models win:</b> with reasoning on high, gpt-oss-120b, nemotron-3-super and nemotron-3-nano reach 97–99%. That takes 6k–21k output tokens per problem (vs. 770) and costs 24–32× more per correct answer.</li>
+      <li><b>Active parameters:</b> gpt-oss-120b is a mixture-of-experts model that runs about 5.1B parameters per token, close to the pipeline's 4.6B total. The model doing the hard part of the pipeline, extraction, is 0.6B.</li>
+      <li><b>Tokens vs. cost:</b> the pipeline uses more tokens than gpt-oss-120b (low), 1,409 vs. 807 per problem, but those tokens run on much smaller models, so they cost less. Token counts are only roughly comparable across models, since each uses a different tokenizer.</li>
+    </ul>
+
+    <h3>Caveats</h3>
+    <ul>
+      <li><b>Chance level:</b> 73 of the 101 puzzles have two answer choices, so random guessing scores about 45%.</li>
+      <li><b>Test set:</b> the puzzles come from the same generator as the training data, so they are in-distribution for the fine-tuned model, but none of the 101 were in its training data. The baseline models answer zero-shot.</li>
+      <li><b>Pipeline cost is estimated:</b> the pipeline runs locally, so it is priced at public API rates for its base models (Qwen3-0.6B on Fireworks, Qwen3-4B on Nebius). Baselines use Ollama Cloud list prices.</li>
+    </ul>
+
+    <h3>Why these puzzles</h3>
+    <p>The three puzzle types are modeled on the logic games in the LSAT's Analytical Reasoning section, which tests deduction from a fixed set of rules:</p>
+    <ul>
+      <li><b>Ordering:</b> place people in positions from clues like "Amy is before Olga." This is the LSAT's sequencing game.</li>
+      <li><b>Grouping:</b> assign people to groups under inclusion and exclusion rules. This is the LSAT's other main game type.</li>
+      <li><b>Knights and knaves:</b> truth-tellers and liars whose statements constrain each other. This classic puzzle adds conditional and self-referential logic.</li>
+    </ul>
+    <p>74 of the 101 test puzzles combine two or three types. Each puzzle has one provably correct answer, and the answer choices take the LSAT's form ("must be true", "could be false"). The puzzles take careful multi-step reasoning for an LLM, but Z3 can check every answer exactly.</p>
+
+    <h3>How it works</h3>
+    <div class="flow"><span>Puzzle text</span><i>→</i><span>Classifier (Qwen3-4B) picks puzzle types</span><i>→</i><span>JSON schema for just those types</span><i>→</i><span>Fine-tuned Qwen3-0.6B extracts constraints</span><i>→</i><span>Z3 tests each answer choice</span><i>→</i><span>Answer + explanation</span></div>
+    <p>The language model only translates the puzzle into structured constraints, and Z3 does the reasoning. Constrained decoding against a schema narrowed to the puzzle's types limits what the model can get wrong, which is what makes 0.6B enough.</p>
+
+    <h3>RAG pilot: retrieved examples for the base 0.6B</h3>
+    <p>A separate experiment: can the <em>base</em> Qwen3-0.6B, without fine-tuning, extract better if its prompt shows worked examples that look like the puzzle? For each test puzzle, the 3 most similar of the 915 training puzzles are put in the extraction prompt, each as puzzle text plus its gold JSON. Retrieval only ever searches the training set.</p>
+    <figure><img src="/plots/6_rag_vs_no_rag.png" alt="Bar chart comparing the base 0.6B model with and without retrieved examples" loading="lazy"></figure>
+    <ul>
+      <li><b>Accuracy:</b> 16.8% → 26.7% (17 → 27 of 101). Only RAG got 17 puzzles right and only no-RAG got 7 (exact McNemar p = 0.064): a strong trend, just short of significant.</li>
+      <li><b>Fewer contradictions:</b> extractions that Z3 found self-contradictory fell from 30 to 19.</li>
+      <li><b>Gains are mostly on single-type puzzles:</b> 6 → 13 of 27. Puzzles that mix two or three types barely moved (11 → 14 of 74).</li>
+      <li><b>Cost:</b> about 2.8× the input tokens (1,218 → 3,361) and 2× the time per puzzle (7.7 s → 15.4 s).</li>
+      <li><b>For scale:</b> the fine-tuned 0.6B in the main pipeline scores 91.1%.</li>
+    </ul>
+    <p><b>Caveat:</b> the test puzzles come from the same generator as the training puzzles, so a close match always exists. This shows RAG helps on puzzles like the training set. It doesn't yet show it helps on puzzles written in other words.</p>
+
+    <h3>More graphs</h3>
+    <figure><img src="/plots/2_accuracy_vs_params.png" alt="Accuracy against total model size" loading="lazy"><figcaption>Accuracy vs. total model size</figcaption></figure>
+    <figure><img src="/plots/3_cost_per_correct.png" alt="Cost per correct answer as a multiple of the pipeline's" loading="lazy"><figcaption>Cost per correct answer, as a multiple of the pipeline's</figcaption></figure>
+    <figure><img src="/plots/4_output_tokens.png" alt="Output tokens per problem" loading="lazy"><figcaption>Output tokens per problem, thinking included</figcaption></figure>
+    <p class="small">Method, data and code: <a href="https://github.com/theodorepeebles/Neurosymbolic-Testing" target="_blank" rel="noopener">github.com/theodorepeebles/Neurosymbolic-Testing</a>.</p>
+  </section>
+
+  <footer class="foot">
+    <p>Every model output shown here is real. The classifier's puzzle types and the extractor's JSON were produced by the models and saved; this page replays them. The rules, the solution and the proofs are rebuilt by Z3 from that output on each request.</p>
+    <p>Token counts and model timings are from the machine that ran the models. Z3 timings are from this server. Rule-to-phrase links come from the phrase the model quoted for each rule; "BM25" marks a link found by text similarity because the quote was not in the puzzle.</p>
+  </footer>
+</div>
+
+<svg id="links" aria-hidden="true"></svg>
+
+<div class="bar" id="bar">
+  <div class="wrap">
+    <div class="prog" id="prog" role="group" aria-label="Play one stage"></div>
+    <div class="ctl">
+      <button class="btn" id="bReplay" title="Replay this example (R)" aria-label="Replay this example"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v5h5"/></svg><span class="t">Replay</span></button>
+      <button class="btn keep" id="bStage" title="Jump to the end of this stage (S)" aria-label="Skip to the end of this stage"><svg viewBox="0 0 24 24"><path d="M6 5l9 7-9 7z"/><path d="M19 5v14"/></svg><span class="t">Stage</span></button>
+      <button class="btn keep" id="bEnd" title="Jump to the end of this example (E)" aria-label="Skip to the end of this example"><svg viewBox="0 0 24 24"><path d="M4 5l7 7-7 7z"/><path d="M12 5l7 7-7 7z"/><path d="M21 5v14"/></svg><span class="t">End</span></button>
+      <span class="sp"></span>
+      <span class="speed" role="group" aria-label="Speed">
+        <button data-speed="1" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button>
+      </span>
+      <button class="btn keep" id="bNext" title="Next example (→)" aria-label="Next example"><span class="t">Next</span><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const BOOT = /*__BOOT__*/null;
+
+// ── tiny helpers ────────────────────────────────────────────────────────────
+const $ = (s, r = document) => r.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const QS = new URLSearchParams(location.search);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+const DOMAIN_NAME = {ordering: 'ordering', grouping: 'grouping', knights_and_knaves: 'knights & knaves'};
+const domainName = d => DOMAIN_NAME[d] || d.replace(/_/g, ' ');
+const plain = s => s.replace(/_/g, ' ');
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const joinAnd = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+
+// A formal rule like before(Thomas, Ana), with the function names in bold. Built from text
+// nodes only: rule text comes from model output and is never parsed as HTML.
+function ruleCode(label) {
+  const c = el('code', 'fr');
+  let last = 0;
+  for (const m of label.matchAll(/[a-z_]+(?=\()/g)) {
+    if (m.index > last) c.append(label.slice(last, m.index));
+    c.append(el('b', '', m[0]));
+    last = m.index + m[0].length;
+  }
+  c.append(label.slice(last));
+  return c;
+}
+function checkIcon() {
+  const s = document.createElementNS(NS, 'svg');
+  s.setAttribute('class', 'ck'); s.setAttribute('viewBox', '0 0 16 16');
+  const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M3 8.5l3.2 3.2L13 5');
+  s.append(p); return s;
+}
+function fmtMeta(m) {
+  if (!m) return '';
+  const parts = [m.model || m.engine];
+  if (m.in_tok != null) parts.push(`${m.in_tok} tokens in, ${m.out_tok} out`);
+  if (m.status) parts.push(m.status);
+  if (m.time_ms != null) parts.push(m.time_ms >= 1000 ? (m.time_ms / 1000).toFixed(1) + ' s' : (m.time_ms < 10 ? m.time_ms.toFixed(1) : Math.round(m.time_ms)) + ' ms');
+  return parts.map(p => String(p).replace(/ /g, ' ')).join(' · ');   // break only between parts
+}
+
+// ── page state ──────────────────────────────────────────────────────────────
+const root = document.documentElement;
+const panel = $('#ptext'), bar = $('#bar'), colB = $('#colB');
+const STAGES = ['Classify', 'Extract', 'Solve', 'Test choices'];
+// speed is the playback rate (see RATE). manual is true after a stage was played on its own:
+// playback then never continues into the next stage by itself.
+const RATE = .625;   // rate of the 1x button; the 2x button is twice this
+const st = {n: 1, T: null, steps: [], i: 0, speed: RATE, gen: 0, done: false, follow: true, manual: false, view: 'example'};
+const traces = new Map([[1, BOOT.first]]);
+let R = {};          // rule id -> {revealed, mode, els: [elements], seg: first text span}
+let segs = [];       // puzzle text spans: {el, ids}
+let focus = new Set();  // rule ids under the mouse
+let hoverEl = null;     // the rule element or puzzle phrase under the mouse
+
+// ── lines from a source phrase to its rule ──────────────────────────────────
+const Links = (() => {
+  const svg = $('#links'), items = new Map();
+  let raf = 0;
+  function set(key, from, to, cls) {
+    if (!from || !to) return;
+    let it = items.get(key);
+    if (!it) {
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('pathLength', '1');
+      svg.append(p);
+      it = {p};
+      items.set(key, it);
+      if (REDUCED) p.classList.add('drawn');
+      else requestAnimationFrame(() => requestAnimationFrame(() => p.classList.add('drawn')));
+    }
+    Object.assign(it, {from, to});
+    it.p.classList.remove('y', 'r', 'n');
+    it.p.classList.add(cls);
+    layout();
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
+  function clear(prefix, keep) {   // keep: a key prefix to leave alone (the hover link, "f:")
+    for (const [k, it] of items) {
+      if (keep && k.startsWith(keep)) continue;
+      if (!prefix || k.startsWith(prefix)) { it.p.remove(); items.delete(k); }
+    }
+  }
+  function frame() { raf = 0; if (!items.size) return; layout(); raf = requestAnimationFrame(frame); }
+  function layout() {
+    const pr = panel.getBoundingClientRect();
+    const floor = innerHeight - bar.offsetHeight;
+    for (const it of items.values()) {
+      const fr = it.from.getClientRects()[0], tr = it.to.getBoundingClientRect();
+      // Stacked layout: the puzzle is pinned above the rules. Side by side: it is to their left.
+      const stacked = tr.left < pr.right - 20;
+      let ok = fr && tr.width > 0 && fr.bottom > pr.top + 2 && fr.top < Math.min(pr.bottom, floor) - 2
+        && tr.bottom > 8 && tr.top < floor - 6;
+      if (ok && stacked && tr.top < pr.bottom + 2) ok = false;   // the rule is under the pinned puzzle
+      if (!ok) { it.p.style.display = 'none'; continue; }
+      it.p.style.display = '';
+      let d;
+      if (stacked) {
+        const x1 = clamp(tr.left + 28, fr.left + 4, fr.right - 4), y1 = fr.bottom;
+        const x2 = tr.left + Math.min(28, tr.width / 2), y2 = tr.top;
+        const k = Math.max(18, (y2 - y1) / 2);
+        d = `M${x1},${y1} C${x1},${y1 + k} ${x2},${y2 - k} ${x2},${y2}`;
+      } else {
+        const x1 = fr.right, y1 = (fr.top + fr.bottom) / 2;
+        const x2 = tr.left, y2 = tr.top + Math.min(tr.height / 2, 15);
+        const k = Math.max(24, (x2 - x1) / 2);
+        d = `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`;
+      }
+      it.p.setAttribute('d', d);
+    }
+  }
+  return {set, clear};
+})();
+
+// ── rule state -> classes on rule rows, chips, pips and the puzzle text ─────
+const MODES = ['m-link', 'm-test', 'm-conflict', 'm-flash', 'm-focus'];
+function paint(id) {
+  const r = R[id];
+  if (!r) return;
+  const mode = r.mode || (focus.has(id) ? 'focus' : '');
+  for (const e of r.els) { e.classList.remove(...MODES); if (mode) e.classList.add('m-' + mode); }
+}
+function paintText() {
+  const rank = {conflict: 5, test: 4, link: 4, flash: 3, focus: 2};
+  for (const s of segs) {
+    let best = '', linked = false;
+    for (const id of s.ids) {
+      const r = R[id];
+      if (!r || !r.revealed) continue;
+      linked = true;
+      const mode = r.mode || (focus.has(id) ? 'focus' : '');
+      if (mode && (rank[mode] || 0) > (rank[best] || 0)) best = mode;
+    }
+    s.el.className = 'seg' + (linked ? ' lk' : '') + (best ? ' m-' + best : '');
+  }
+}
+function setMode(ids, mode) { for (const id of ids) if (R[id]) { R[id].mode = mode; paint(id); } paintText(); }
+function clearTransient() {
+  Links.clear('', 'f:');        // the animation's links and modes go; a hover highlight stays
+  for (const id in R) if (R[id].mode) { R[id].mode = ''; }
+  for (const id in R) paint(id);
+  paintText();
+}
+function show(e, instant) { if (!e) return; e.classList.add('on'); if (!instant && !REDUCED) e.classList.add('enter'); }
+function reveal(id, instant) {
+  const r = R[id];
+  if (!r) return;
+  r.revealed = true;
+  if (r.row) show(r.row, instant);
+  if (r.grp) show(r.grp, instant);
+}
+
+// ── keeping the action on screen ────────────────────────────────────────────
+const stacked = () => !matchMedia('(min-width:720px)').matches;
+function scrollInside(box, e) {
+  // Scroll only the box (not the page) so that e is visible inside it.
+  if (!box || !e || box.scrollHeight <= box.clientHeight + 2) return;
+  const b = box.getBoundingClientRect(), r = (e.getClientRects()[0] || e.getBoundingClientRect());
+  let dy = 0;
+  if (r.bottom > b.bottom - 10) dy = r.bottom - b.bottom + 28;
+  else if (r.top < b.top + 10) dy = r.top - b.top - 28;
+  if (dy) box.scrollBy({top: dy, behavior: REDUCED ? 'auto' : 'smooth'});
+}
+function follow(e) {
+  if (!st.follow || !e) return;
+  const box = e.closest('.colB');
+  if (box && getComputedStyle(box).position === 'sticky') scrollInside(box, e);
+  const r = e.getBoundingClientRect();
+  const top = (stacked() ? Math.max(0, panel.parentElement.getBoundingClientRect().bottom) : 0) + 12;
+  const bottom = innerHeight - bar.offsetHeight - 14;
+  let dy = 0;
+  if (r.bottom > bottom) dy = r.bottom - bottom;
+  if (r.top - dy < top) dy = r.top - top;
+  if (Math.abs(dy) > 4) scrollBy({top: dy, behavior: REDUCED ? 'auto' : 'smooth'});
+}
+function showPhrase(id) {
+  const r = R[id];
+  if (!r || !r.seg) return;
+  scrollInside(panel, r.seg);
+  const colA = panel.closest('.colA');
+  if (colA && getComputedStyle(colA).position === 'sticky') scrollInside(colA, r.seg);
+}
+for (const ev of ['wheel', 'touchmove']) addEventListener(ev, () => { st.follow = false; }, {passive: true});
+
+// ── building one example's DOM ──────────────────────────────────────────────
+function buildText(T) {
+  // Cut the puzzle text at every span boundary, so overlapping spans can each light up.
+  const text = T.problem_text, X = T.stages.extraction;
+  const spans = [];
+  for (const r of X.rules) if (r.span) spans.push({id: r.id, s: r.span[0], e: r.span[1]});
+  for (const c of X.choices) for (const r of c.rules) if (r.span) spans.push({id: r.id, s: r.span[0], e: r.span[1]});
+  const cuts = [...new Set([0, text.length, ...spans.flatMap(p => [p.s, p.e])])].sort((a, b) => a - b);
+  panel.textContent = '';
+  panel.classList.remove('sweeping');
+  panel.scrollTop = 0;
+  segs = [];
+  for (let k = 0; k < cuts.length - 1; k++) {
+    const a = cuts[k], b = cuts[k + 1];
+    const e = el('span', 'seg', text.slice(a, b));
+    e.style.setProperty('--d', (a / Math.max(1, text.length)).toFixed(3));
+    const ids = spans.filter(p => p.s <= a && p.e >= b).map(p => p.id);
+    segs.push({el: e, ids});
+    panel.append(e);
+    for (const id of ids) if (R[id] && !R[id].seg) R[id].seg = e;
+  }
+}
+
+function ruleRow(rule, ix, sub, tagText) {
+  const li = el('li', 'rule');
+  li.dataset.rule = rule.id;
+  const mid = el('div');
+  mid.append(ruleCode(rule.label));
+  if (sub) mid.append(el('span', 'qt', sub));
+  const side = el('div', 'side');
+  if (tagText) side.append(el('span', 'tag', tagText));
+  side.append(checkIcon());
+  li.append(el('span', 'ix', ix), mid, side);
+  return li;
+}
+const METHOD_TAG = {option_a: 'quoted', bm25_fallback: 'BM25', unattributed: 'no source'};
+
+// One assignment (the solution, or a witness) as lanes: an order row, group boxes, roles.
+function lanes(values, T, opt = {}) {
+  const X = T.stages.extraction, box = el('div'), names = {};
+  const by = {slot: {}, group: {}, kk: {}};
+  for (const [v, val] of Object.entries(values)) {
+    const k = v.indexOf('_'), kind = v.slice(0, k), ent = v.slice(k + 1);
+    if (!by[kind]) continue;
+    (by[kind][String(val)] ||= []).push({v, ent});
+  }
+  const lane = (label, cells) => {
+    const L = el('div', 'lane');
+    L.append(el('span', 'lane-lab', label));
+    for (const [key, list] of cells) {
+      const c = el('div', 'cell');
+      c.append(el('span', 'k', key));
+      const vals = el('span', 'vals');
+      for (const {v, ent} of list || []) {
+        const nm = el('span', 'nm', ent);
+        if (opt.pending) nm.classList.add('pend');
+        if (opt.free && opt.free.has(v)) nm.classList.add('free');
+        if (opt.hit && opt.hit.has(v)) nm.classList.add(opt.hitClass);
+        names[v] = nm;
+        vals.append(nm);
+      }
+      c.append(vals);
+      L.append(c);
+    }
+    box.append(L);
+  };
+  const range = (n, used) => { const m = Math.max(n || 0, ...Object.keys(used).map(Number), 0); return Array.from({length: m}, (_, i) => String(i + 1)); };
+  if (Object.keys(by.slot).length) lane('Order', range(X.num_slots, by.slot).map(k => [k, by.slot[k]]));
+  if (Object.keys(by.group).length) lane('Groups', range(X.num_groups, by.group).map(k => ['group ' + k, by.group[k]]));
+  if (Object.keys(by.kk).length) lane('Knights and knaves', [['knights', by.kk.true], ['knaves', by.kk.false]]);
+  return {box, names};
+}
+
+// What the page says for each (question type, verdict). "claim" is the choice's statement.
+const ASK = {
+  claim: 'Assume it is true. Can every rule still hold?',
+  opposite: 'Assume it is false. Can every rule still hold?',
+};
+const PROOF = {
+  'could_be_true|confirmed': 'It can be true. An arrangement that satisfies every rule, where it holds:',
+  'could_be_true|eliminated': 'It can never be true. It conflicts with this smallest set of rules:',
+  'must_be_true|confirmed': 'It can never be false. Its opposite conflicts with this smallest set of rules:',
+  'must_be_true|eliminated': 'It is not forced. This arrangement satisfies every rule, and it is false here:',
+  'must_be_false|confirmed': 'It can never be true. It conflicts with this smallest set of rules:',
+  'must_be_false|eliminated': 'It can be true. This arrangement satisfies every rule, and it holds here:',
+  'could_be_false|confirmed': 'It can be false. An arrangement that satisfies every rule, where it does not hold:',
+  'could_be_false|eliminated': 'It can never be false. Its opposite conflicts with this smallest set of rules:',
+};
+
+function render(T) {
+  const S = T.stages, C = S.classification, X = S.extraction, Z = S.solving, A = S.choices;
+  const U = {card: {}, dom: {}, names: {}};
+  R = {}; focus = new Set(); hoverEl = null; Links.clear();
+  for (const s of document.querySelectorAll('.stage, .hide, .result, .diff')) s.classList.remove('on', 'enter');
+
+  $('#srcText').textContent = T.source === 'live' ? 'Live' : 'Replay of a test example';
+
+  // 1 classify
+  $('#m0').textContent = fmtMeta(C.meta);
+  const doms = $('#domains'); doms.textContent = '';
+  for (const d of C.all_domains) { U.dom[d] = el('span', 'dom', domainName(d)); doms.append(U.dom[d]); }
+  const note = $('#clsNote'); note.textContent = ''; note.className = 'note hide';
+  if (C.correct === true) { note.classList.add('good'); note.textContent = '✓ Same as the puzzle types labelled in the test set.'; }
+  else if (C.correct === false) {
+    note.classList.add('bad');
+    const bits = [];
+    if (C.extra.length) bits.push(`${joinAnd(C.extra.map(domainName))} ${C.extra.length > 1 ? 'are' : 'is'} not in this puzzle`);
+    if (C.missing.length) bits.push(`it missed ${joinAnd(C.missing.map(domainName))}`);
+    note.textContent = `✕ Wrong: ${bits.join(', and ')}. The test set labels it ${joinAnd(C.gold_domains.map(domainName))}.`;
+  }
+
+  // 2 extract
+  $('#m1').textContent = fmtMeta(X.meta);
+  const types = $('#types'); types.textContent = '';
+  for (const t of X.allowed_types) types.append(el('code', '', t));
+  for (const t of X.wrapper_types) types.append(el('code', 'plus', t));
+  const ents = $('#ents'); ents.textContent = '';
+  ents.append(el('b', '', X.entities.join(', ')));
+  const dims = [];
+  if (X.num_slots != null) dims.push(plural(X.num_slots, 'position'));
+  if (X.num_groups != null) dims.push(plural(X.num_groups, 'group'));
+  if (dims.length) ents.append(' · ' + dims.join(' · '));
+
+  const list = $('#rules'); list.textContent = '';
+  const group = name => { const g = el('li', 'grp', name); list.append(g); return g; };
+  const register = (rule, row, grp) => { R[rule.id] = {revealed: false, mode: '', els: [row], row, grp, seg: null, label: rule.label}; list.append(row); };
+  let g = group('Clues'), n = 0;
+  for (const r of X.rules.filter(r => r.kind === 'clue')) register(r, ruleRow(r, String(++n), '', METHOD_TAG[r.method]), g);
+  const givens = X.rules.filter(r => r.kind === 'given');
+  if (givens.length) { g = group('Given in the question'); for (const r of givens) register(r, ruleRow(r, String(++n), '', METHOD_TAG[r.method]), g); }
+  g = group('Answer choices');
+  for (const c of X.choices) for (const r of c.rules) register(r, ruleRow(r, c.label, plain(c.type), METHOD_TAG[r.method]), g);
+  if (Z.builtin_rules.length) {
+    g = group('Built in (added by the solver)');
+    for (const r of Z.builtin_rules) {
+      const row = el('li', 'rule'); row.dataset.rule = r.id;
+      const side = el('div', 'side'); side.append(el('span', 'tag', 'built in'), checkIcon());
+      row.append(el('span', 'ix', '+'), el('code', 'fr', r.label), side);
+      register(r, row, g);
+    }
+  }
+  const methods = new Set([...X.rules, ...X.choices.flatMap(c => c.rules)].map(r => r.method));
+  const leg = [];
+  if (methods.has('option_a')) leg.push('quoted = the model quoted this phrase and it is in the puzzle');
+  if (methods.has('bm25_fallback')) leg.push('BM25 = the quote was not found; linked by text similarity');
+  if (methods.has('unattributed')) leg.push('no source = no phrase could be linked');
+  $('#legend').textContent = leg.join(' · ') + '. Hover over a rule or a phrase to see what it is linked to.';
+  let pretty = X.raw;
+  try { pretty = JSON.stringify(JSON.parse(X.raw), null, 1); } catch (e) { /* show as is */ }
+  $('#rawPre').textContent = pretty;
+  $('#raw').open = false;
+
+  buildText(T);
+
+  // 3 solve
+  $('#m2').textContent = fmtMeta({...Z.meta, status: Z.status});
+  const board = $('#board'); board.textContent = '';
+  const pips = $('#pips'); pips.textContent = '';
+  const sum = $('#solveSum'); sum.className = 'note hide';
+  if (Z.status === 'sat') {
+    const values = Object.fromEntries(Z.variables.map(v => [v.var, v.value]));
+    const free = new Set(Z.variables.filter(v => !v.forced).map(v => v.var));
+    const L = lanes(values, T, {pending: true, free});
+    board.append(L.box); U.names = L.names; U.anyFree = free.size > 0;
+    Z.checks.forEach((c, k) => {
+      const p = el('span', 'pip', R[c.id] && R[c.id].row ? R[c.id].row.querySelector('.ix').textContent : String(k + 1));
+      p.dataset.rule = c.id;
+      if (R[c.id]) R[c.id].els.push(p);
+      pips.append(p);
+    });
+    const good = Z.checks.filter(c => c.satisfied).length;
+    sum.classList.add(good === Z.checks.length ? 'good' : 'bad');
+    sum.textContent = `${good === Z.checks.length ? '✓ ' : '✕ '}${good} of ${plural(Z.checks.length, 'rule')} hold in this arrangement.`;
+  } else {
+    sum.classList.add('bad');
+    sum.textContent = Z.status === 'unsat'
+      ? '✕ No arrangement exists: the highlighted rules contradict each other, so no answer choice can be tested.'
+      : '✕ Z3 could not decide whether an arrangement exists.';
+  }
+
+  // 4 choices
+  $('#m3').textContent = fmtMeta(A.meta);
+  const wrapC = $('#choices'); wrapC.textContent = '';
+  const byLabel = Object.fromEntries(A.results.map(r => [r.label, r]));
+  for (const c of X.choices) {
+    const res = byLabel[c.label];
+    const card = el('article', 'choice');
+    const head = el('div', 'head');
+    head.append(el('span', 'lab', c.label), el('span', 'tag', plain(c.type)));
+    for (const r of c.rules) { const code = ruleCode(r.label); head.append(code); }
+    if (c.rules[0]) { head.dataset.rule = c.rules[0].id; R[c.rules[0].id].els.push(head); }
+    const verdict = el('span', 'verdict', '');
+    head.append(verdict);
+    card.append(head);
+    const u = {card, head, verdict, res, ids: c.rules.map(r => r.id), chips: {}};
+    if (res) {
+      u.ask = el('p', 'ln ask', ASK[res.asserted]);
+      u.z3 = el('p', 'ln z3');
+      u.z3.append('Z3: ', el('b', '', res.z3 === 'sat' ? 'satisfiable' : 'unsatisfiable'), res.z3 === 'sat' ? ' (yes, here is one)' : ' (no arrangement exists)');
+      u.proof = el('div', 'ln proof');
+      u.proof.append(el('p', '', PROOF[`${res.type}|${res.verdict}`] || ''));
+      if (res.proof.kind === 'mus') {
+        const ul = el('ul', 'mus');
+        for (const id of res.proof.rules) {
+          const li = el('li', id.startsWith('implicit.') ? 'builtin' : '');
+          li.dataset.rule = id;
+          li.append(ruleCode(R[id] ? R[id].label : id));
+          if (R[id]) R[id].els.push(li);
+          u.chips[id] = li;
+          ul.append(li);
+        }
+        u.proof.append(ul);
+        if (res.proof.alternatives.length) {
+          const d = el('details', 'alts');
+          d.append(el('summary', '', `${plural(res.proof.alternatives.length, 'other smallest set')} also ${res.proof.alternatives.length === 1 ? 'does' : 'do'} it`));
+          const ol = el('ul');
+          for (const alt of res.proof.alternatives) {
+            const li = el('li');
+            alt.forEach((id, k) => { if (k) li.append(' + '); li.append(ruleCode(R[id] ? R[id].label : id)); });
+            ol.append(li);
+          }
+          d.append(ol);
+          u.proof.append(d);
+        }
+      } else if (res.proof.model) {
+        u.proof.append(lanes(res.proof.model, T, {hit: new Set(res.focus_vars), hitClass: res.verdict === 'confirmed' ? 'hit-green' : 'hit-red'}).box);
+      }
+      card.append(u.ask, u.z3, u.proof);
+    }
+    U.card[c.label] = u;
+    wrapC.append(card);
+  }
+
+  // result
+  const out = $('#result'); out.textContent = ''; out.className = 'result';
+  const big = el('div', 'big'), say = el('p');
+  if (A.outcome === 'single') big.textContent = `Answer: ${A.answer}`;
+  else if (A.outcome === 'none') { big.textContent = 'No answer'; say.textContent = 'No choice could be proven from the extracted rules, so the pipeline gave no answer.'; }
+  else if (A.outcome === 'multiple') { big.textContent = `No single answer: ${joinAnd(A.verified)} ${A.verified.length === 2 ? 'both' : 'all'} passed`; say.textContent = 'More than one choice passed, so the pipeline has no single answer.'; }
+  else { big.textContent = 'No answer'; say.textContent = 'The extracted rules contradict each other.'; }
+  if (A.correct === true) { out.classList.add('good'); big.textContent = '✓ ' + big.textContent; say.textContent = 'Matches the correct answer in the test set.'; }
+  else if (A.correct === false) { out.classList.add('bad'); big.textContent = '✕ ' + big.textContent; say.textContent += ` The correct answer is ${A.gold_answer}. This example is scored as wrong.`; }
+  out.append(big);
+  if (say.textContent) out.append(say);
+
+  // what went wrong (only built when the answer is wrong)
+  const diff = $('#diff'); diff.textContent = ''; diff.className = 'diff';
+  U.differs = [];
+  if (T.gold_diff) {
+    const D = T.gold_diff, ol = el('ol');
+    diff.append(el('h3', '', 'What went wrong'));
+    if (C.extra.length) {
+      const li = el('li');
+      li.append('The classifier added ', el('b', '', joinAnd(C.extra.map(domainName))), ', a puzzle type this puzzle does not have. That put its rule types into the extractor\'s schema.');
+      ol.append(li);
+    }
+    for (const ch of D.changed) {
+      const li = el('li');
+      const was = ruleCode(ch.model); was.classList.add('was');
+      li.append(ch.where === 'clue' ? 'A clue' : ch.where === 'given' ? 'The given condition' : `Choice ${ch.where.split(' ')[1]}`, ' was extracted as ', was);
+      if (ch.gold) li.append('. The correct rule is ', ruleCode(ch.gold));
+      li.append('.');
+      const src = R[ch.id] && R[ch.id].seg ? R[ch.id].seg.textContent : '';
+      if (src) li.append(el('span', 'q', ` Source: “${src.trim()}”.`));
+      if (ch.types_from_extra_domains.length) li.append(el('span', 'q', ` Its rule type belongs to ${joinAnd(ch.types_from_extra_domains.map(domainName))}, which was only available because of the classifier's mistake.`));
+      ol.append(li);
+      U.differs.push(ch.id);
+    }
+    for (const m of D.missing) { const li = el('li'); li.append('Missing: ', ruleCode(m.gold), ` (${m.where}).`); ol.append(li); }
+    for (const c of D.choice_types) ol.append(el('li', '', `Choice ${c.label} was read as "${plain(c.model)}" instead of "${plain(c.gold)}".`));
+    diff.append(ol);
+  }
+  paintText();
+  return U;
+}
+
+// ── the timeline: every step sets state; a skip runs steps with instant = true ──
+function buildSteps(T, U) {
+  const S = T.stages, C = S.classification, X = S.extraction, Z = S.solving, A = S.choices;
+  const steps = [];
+  const add = (stage, dur, fn) => steps.push({stage, dur, fn});
+  // The pause between two stages is GAP.end (after a stage's last step) + GAP.start (after the
+  // next stage's heading appears).
+  const GAP = {end: 500, start: 400};
+  // With three columns the rule list sits between the puzzle and the choices, so a link ends at
+  // the rule's row there. In narrower layouts it ends at the element in view (`near`).
+  const wide = () => matchMedia('(min-width:1100px)').matches;
+  const link = (key, id, near, cls) => {
+    if (!R[id] || !R[id].seg) return;
+    const to = wide() && R[id].row ? R[id].row : near;
+    if (wide() && R[id].row) scrollInside(colB, R[id].row);
+    Links.set(key, R[id].seg, to, cls);
+  };
+
+  // 1 classify: the text is read, the predicted types switch on
+  add(0, 1900, i => {
+    show($('#s0'), i);
+    for (const d of C.all_domains) U.dom[d].classList.add('cand');
+    if (!i && !REDUCED) panel.classList.add('sweeping');
+  });
+  C.predicted_domains.forEach(d => add(0, 430, i => {
+    panel.classList.remove('sweeping');
+    U.dom[d].classList.add('picked');
+    if (!i) follow($('#s0'));
+  }));
+  add(0, GAP.end, i => {
+    panel.classList.remove('sweeping');
+    for (const d of C.all_domains) U.dom[d].classList.remove('cand');
+    for (const d of C.extra) U.dom[d].classList.add('extra');
+    show($('#clsNote'), i);
+    if (!i) follow($('#s0'));
+  });
+
+  // 2 extract: each rule appears, linked to the phrase it came from
+  add(1, GAP.start, i => { clearTransient(); show($('#s1'), i); if (!i) follow($('#ents')); });
+  const all = [...X.rules, ...X.choices.flatMap(c => c.rules)];
+  const per = clamp(8500 / Math.max(1, all.length), 400, 780);
+  for (const r of all) add(1, per, i => {
+    clearTransient();
+    reveal(r.id, i);
+    setMode([r.id], 'link');
+    if (!i) { showPhrase(r.id); follow(R[r.id].row); link('x', r.id, R[r.id].row, 'y'); }
+  });
+  add(1, GAP.end, i => { clearTransient(); show($('#legend'), i); show($('#raw'), i); });
+
+  // 3 solve: an arrangement fills in, then every rule is checked against it
+  add(2, GAP.start, i => {
+    clearTransient();
+    show($('#s2'), i);
+    for (const b of Z.builtin_rules) reveal(b.id, i);
+    if (!i) follow($('#s2'));
+  });
+  if (Z.status === 'sat') {
+    const place = clamp(1500 / Math.max(1, Z.variables.length), 60, 170);
+    for (const v of Z.variables) add(2, place, () => { U.names[v.var] && U.names[v.var].classList.remove('pend'); });
+    add(2, 650, i => { if (U.anyFree) show($('#freeNote'), i); show($('#pipsWrap'), i); if (!i) follow($('#pipsWrap')); });
+    const chk = clamp(3200 / Math.max(1, Z.checks.length), 130, 280);
+    for (const c of Z.checks) add(2, chk, i => {
+      clearTransient();
+      setMode([c.id], 'flash');
+      for (const e of (R[c.id] ? R[c.id].els : [])) e.classList.add(c.satisfied ? 'ok' : 'bad');
+      if (!i && R[c.id]) { showPhrase(c.id); if (!stacked()) scrollInside(colB, R[c.id].row); }
+    });
+    add(2, GAP.end, i => { clearTransient(); show($('#solveSum'), i); if (!i) follow($('#solveSum')); });
+  } else {
+    add(2, 2200, i => { setMode(Z.unsat_core, 'conflict'); show($('#solveSum'), i); if (!i) follow($('#solveSum')); });
+  }
+
+  // 4 choices: assume, ask Z3, show the proof
+  add(3, GAP.start, i => { if (Z.status === 'sat') clearTransient(); show($('#s3'), i); if (!i) follow($('#s3')); });
+  for (const res of A.results) {
+    const u = U.card[res.label];
+    if (!u) continue;
+    add(3, 1200, i => {
+      clearTransient();
+      u.card.classList.add('testing');
+      u.verdict.textContent = 'testing';
+      show(u.ask, i);
+      setMode(u.ids, 'test');
+      if (!i) { showPhrase(u.ids[0]); follow(u.card); link('c', u.ids[0], u.head, 'y'); }
+    });
+    add(3, 900, i => { show(u.z3, i); if (!i) follow(u.card); });
+    const mus = res.proof.kind === 'mus' ? res.proof.rules : [];
+    add(3, mus.length ? 2600 + 250 * mus.length : 2400, i => {
+      Links.clear();
+      u.card.classList.remove('testing');
+      u.card.classList.add(res.verdict);
+      u.verdict.textContent = res.verdict === 'confirmed' ? '✓ confirmed' : '✕ eliminated';
+      show(u.proof, i);
+      setMode(u.ids, res.verdict === 'confirmed' ? 'flash' : 'conflict');
+      setMode(mus, 'conflict');
+      if (!i) {
+        follow(u.card);
+        const first = mus.find(id => R[id] && R[id].seg);
+        if (first) showPhrase(first);
+        mus.forEach(id => link('m:' + id, id, u.chips[id], 'r'));
+      }
+    });
+    add(3, 450, () => { clearTransient(); u.card.classList.add('settled'); });
+  }
+  add(3, 1500, i => {
+    clearTransient();
+    show($('#result'), i);
+    if (A.correct === false && A.gold_answer && U.card[A.gold_answer]) {
+      const h = U.card[A.gold_answer].head;
+      if (!h.querySelector('.goldtag')) h.insertBefore(el('span', 'goldtag', 'correct answer'), U.card[A.gold_answer].verdict);
+    }
+    if (!i) follow($('#result'));
+  });
+  if (T.gold_diff) add(3, 1500, i => {
+    show($('#diff'), i);
+    for (const id of U.differs) if (R[id] && R[id].row) {
+      R[id].row.classList.add('differs');
+      const side = R[id].row.querySelector('.side');
+      if (!side.querySelector('.gold')) side.prepend(el('span', 'tag gold', 'differs from correct'));
+    }
+    setMode(U.differs, 'conflict');
+    if (!i) follow($('#diff'));
+  });
+  return steps;
+}
+
+// ── playback ────────────────────────────────────────────────────────────────
+function progress() {
+  const total = [0, 0, 0, 0], done = [0, 0, 0, 0];
+  st.steps.forEach((s, k) => { total[s.stage]++; if (k < st.i) done[s.stage]++; });
+  const active = st.i < st.steps.length ? st.steps[Math.max(0, st.i - 1)].stage : -1;
+  [...$('#prog').children].forEach((e, k) => {
+    e.querySelector('.fill').style.width = (total[k] ? 100 * done[k] / total[k] : 0) + '%';
+    e.classList.toggle('active', k === active);
+    e.classList.toggle('done', total[k] > 0 && done[k] === total[k] && k !== active);
+  });
+  $('#bStage').disabled = $('#bEnd').disabled = st.done;
+  $('#bNext').classList.toggle('primary', st.done);
+}
+function wait(ms, gen) {
+  return new Promise(res => {
+    let left = ms, last = performance.now();
+    (function tick() {
+      if (gen !== st.gen) return res();
+      const now = performance.now();
+      left -= (now - last) * st.speed; last = now;
+      if (left <= 0) return res();
+      setTimeout(tick, Math.min(40, left / st.speed + 1));
+    })();
+  });
+}
+// Plays from the current step to the end, or only to the end of one stage if `only` is given.
+async function play(gen, only = null) {
+  while (st.i < st.steps.length && (only === null || st.steps[st.i].stage === only)) {
+    const s = st.steps[st.i];
+    s.fn(false);
+    st.i++;
+    progress();
+    await wait(s.dur, gen);
+    if (gen !== st.gen) return;
+  }
+  if (st.i >= st.steps.length) finish(); else progress();
+}
+function finish() { st.done = true; progress(); debugMark(); }
+function instantly(fn) {
+  root.classList.add('instant');
+  panel.classList.remove('sweeping');
+  fn();
+  Links.clear('', 'f:');
+  void root.offsetHeight;          // commit the new styles with transitions off
+  root.classList.remove('instant');
+}
+// Clicking a stage name replays just that stage: the stages before it are shown finished, the
+// stage plays from its start, and playback stops at its end.
+function playStage(k) {
+  if (!st.T || st.view !== 'example') return;
+  const gen = ++st.gen;
+  Object.assign(st, {i: 0, done: false, follow: true, manual: true});
+  instantly(() => {
+    st.U = render(st.T);
+    st.steps = buildSteps(st.T, st.U);
+    while (st.i < st.steps.length && st.steps[st.i].stage < k) st.steps[st.i++].fn(true);
+  });
+  progress();
+  play(gen, k);
+}
+function skipStage() {
+  if (st.done || st.i >= st.steps.length) return;
+  const gen = ++st.gen, stage = st.steps[st.i].stage;
+  st.follow = true;
+  instantly(() => { while (st.i < st.steps.length && st.steps[st.i].stage === stage) st.steps[st.i++].fn(true); });
+  progress();
+  follow($('#s' + stage));
+  if (st.i >= st.steps.length) finish();
+  else if (!st.manual) wait(700, gen).then(() => { if (gen === st.gen) play(gen); });
+}
+function skipEnd() {
+  if (st.done) return;
+  ++st.gen;
+  instantly(() => { while (st.i < st.steps.length) st.steps[st.i++].fn(true); });
+  finish();
+}
+// The buttons say 1x and 2x. Step durations in buildSteps are in ms at rate 1; 1x plays them
+// at RATE and 2x at twice RATE.
+const SPEEDS = [1, 2];
+function setSpeed(label) {
+  if (!SPEEDS.includes(label)) label = 1;
+  st.speed = label * RATE;
+  root.style.setProperty('--speed', st.speed);
+  for (const b of document.querySelectorAll('.speed button')) b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === label));
+}
+
+async function getTrace(n) {
+  if (!traces.has(n)) {
+    const r = await fetch('/api/trace/' + n);
+    if (!r.ok) throw new Error('could not load example ' + n);
+    traces.set(n, await r.json());
+  }
+  return traces.get(n);
+}
+async function load(n, opts = {}) {
+  const gen = ++st.gen;
+  let T;
+  try { T = await getTrace(n); }
+  catch (e) { $('#exline').textContent = ''; $('#exline').append(el('span', 'bad', e.message + '. Check your connection and try again.')); return; }
+  if (gen !== st.gen) return;
+  Object.assign(st, {n, T, i: 0, done: false, follow: true, manual: false, view: 'example'});
+  document.body.classList.remove('view-results');
+  syncBar();
+  for (const b of $('#picker').children) b.setAttribute('aria-current', String(Number(b.dataset.n) === n));
+  const ex = BOOT.examples[n - 1], line = $('#exline');
+  line.textContent = '';
+  line.append(el('b', '', `Example ${n} of ${BOOT.examples.length}`), el('span', '', `${plural(ex.num_rules, 'rule')} · ${plural(ex.num_choices, 'answer choice')}`));
+  if (ex.correct === false) line.append(el('span', 'bad', 'The pipeline got this one wrong.'));
+  history.replaceState(null, '', '#' + n);
+  instantly(() => { st.U = render(T); });
+  st.steps = buildSteps(T, st.U);
+  progress();
+  if (opts.top !== false) scrollTo({top: 0, behavior: 'auto'});
+  const upTo = opts.end ? st.steps.length : (opts.step || 0);
+  if (upTo) instantly(() => { while (st.i < Math.min(upTo, st.steps.length)) st.steps[st.i++].fn(true); });
+  if (opts.end || st.i >= st.steps.length) return finish();
+  if (opts.step) { progress(); debugMark(); return; }
+  play(gen);
+  const next = n % BOOT.examples.length + 1;     // have the next example ready
+  setTimeout(() => getTrace(next).catch(() => {}), 1500);
+}
+
+// ── the static results page ─────────────────────────────────────────────────
+function showResults() {
+  ++st.gen;                       // stops any playback
+  st.view = 'results';
+  Links.clear();
+  hoverEl = null; focus.clear();
+  document.body.classList.add('view-results');
+  for (const b of $('#picker').children) b.setAttribute('aria-current', String(b.dataset.view === 'results'));
+  history.replaceState(null, '', '#results');
+  scrollTo({top: 0, behavior: 'auto'});
+}
+// Examples 1..N, then the results page, as one sequence for Next and the arrow keys.
+function go(delta) {
+  const N = BOOT.examples.length;
+  const at = st.view === 'results' ? N + 1 : st.n;
+  const to = (at - 1 + delta + N + 1) % (N + 1) + 1;
+  if (to === N + 1) showResults(); else load(to);
+}
+
+// ── hovering a rule or a phrase highlights both, with the link between them ──
+function applyHover() {
+  focus.clear();
+  Links.clear('f:');
+  const hit = hoverEl && hoverEl.isConnected ? hoverEl : null;
+  if (hit) {
+    const seg = hit.classList.contains('seg') ? segs.find(s => s.el === hit) : null;
+    for (const id of (seg ? seg.ids : [hit.dataset.rule])) {
+      if (!R[id] || !R[id].revealed) continue;
+      focus.add(id);
+      const to = seg ? R[id].row : hit;     // from a phrase: to its rule in the list
+      if (R[id].seg && to) Links.set('f:' + id, R[id].seg, to, 'y');
+    }
+  }
+  for (const id in R) paint(id);
+  paintText();
+}
+document.addEventListener('mouseover', e => {
+  const hit = e.target instanceof Element ? e.target.closest('[data-rule], .seg.lk') : null;
+  if (hit === hoverEl) return;
+  hoverEl = hit;
+  applyHover();
+});
+root.addEventListener('mouseleave', () => { if (hoverEl) { hoverEl = null; applyHover(); } });
+
+// ── wiring ──────────────────────────────────────────────────────────────────
+function init() {
+  const picker = $('#picker');
+  for (const ex of BOOT.examples) {
+    const b = el('button', ex.correct === false ? 'wrong' : '', String(ex.n));
+    b.dataset.n = ex.n;
+    b.title = `Example ${ex.n}: ${(ex.domains || []).map(domainName).join(' + ')}${ex.correct === false ? ' (the pipeline got it wrong)' : ''}`;
+    b.setAttribute('aria-label', b.title);
+    b.addEventListener('click', () => load(ex.n));
+    picker.append(b);
+  }
+  const res = el('button', 'res', 'Full results');
+  res.dataset.view = 'results';
+  res.title = 'Benchmark graphs, results table and analysis';
+  res.addEventListener('click', showResults);
+  picker.append(res);
+
+  const prog = $('#prog');
+  STAGES.forEach((name, k) => {
+    const s = el('button', 'st'), tr = el('div', 'tr');
+    tr.append(el('div', 'fill'));
+    s.append(tr, el('span', '', name));
+    s.title = `Play "${name}" on its own`;
+    s.addEventListener('click', () => playStage(k));
+    prog.append(s);
+  });
+  $('#bReplay').addEventListener('click', () => load(st.n, {top: false}));
+  $('#bStage').addEventListener('click', skipStage);
+  $('#bEnd').addEventListener('click', skipEnd);
+  $('#bNext').addEventListener('click', () => go(1));
+  for (const b of document.querySelectorAll('.speed button')) b.addEventListener('click', () => {
+    // On a phone only the current speed is shown, and tapping it switches to the other one.
+    const v = Number(b.dataset.speed);
+    setSpeed(b.getAttribute('aria-pressed') === 'true' ? SPEEDS[(SPEEDS.indexOf(v) + 1) % SPEEDS.length] : v);
+  });
+  addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'arrowright') go(1);
+    else if (k === 'arrowleft') go(-1);
+    else if (st.view !== 'example') return;
+    else if (k === 'r') load(st.n, {top: false});
+    else if (k === 's') skipStage();
+    else if (k === 'e') skipEnd();
+    else if (k === '1' || k === '2') setSpeed(Number(k));
+  });
+  syncBar(); addEventListener('resize', syncBar);
+
+  // #7 opens example 7 and #results the results page. ?end jumps to the end state and
+  // ?step=N stops after N steps (for checking layouts).
+  if (QS.has('speed')) setSpeed(Number(QS.get('speed')));
+  if (location.hash === '#results') return showResults();
+  const fromHash = parseInt(location.hash.slice(1), 10);
+  const n = fromHash >= 1 && fromHash <= BOOT.examples.length ? fromHash : 1;
+  load(n, {end: QS.has('end'), step: parseInt(QS.get('step'), 10) || 0});
+}
+function syncBar() { if (bar.offsetHeight) root.style.setProperty('--bar-h', bar.offsetHeight + 'px'); }
+function debugMark() {
+  if (!QS.has('debug')) return;
+  requestAnimationFrame(() => {
+    root.dataset.debug = JSON.stringify({done: st.done, step: st.i, steps: st.steps.length,
+      scrollW: root.scrollWidth, clientW: root.clientWidth, links: $('#links').childElementCount});
+  });
+}
+addEventListener('error', e => { root.dataset.error = String(e.message); });
+addEventListener('unhandledrejection', e => { root.dataset.error = String(e.reason); });
+
+if (BOOT) init();
+else $('#main').replaceChildren(el('p', 'err', 'This page needs the replay server. Run: python logic/replay/replay_server.py'));
+})();
+</script>
+</body>
+</html>

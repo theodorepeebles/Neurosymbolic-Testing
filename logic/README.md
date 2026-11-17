@@ -103,6 +103,67 @@ and `explanation_debug.py` all read from it, so first run `run.py` with `LOG_TO_
 | `python explanation_debug.py [run_id]` | Prints the full explanation for one puzzle. |
 | `python algorithmic_sft_generator.py --target 100` | Generates more training data. Needs `GEMINI_API_KEY`. |
 
+## Replay demo
+
+An animated page that replays the pipeline on 10 test puzzles from the
+`ns__SFT-0.6b-v4__cls-qwen3-4b-q4_K_M` run (8 answered correctly, 2 answered wrong): the
+classifier's puzzle types, each extracted rule linked to the phrase it came from, Z3's solution,
+and for every answer choice the proof that confirms or eliminates it. It lives in
+[replay/](replay/) and is separate from the chatbox.
+
+On the page: the numbered tabs switch examples, the stage names in the bottom bar replay one
+stage on its own, and hovering a rule or a phrase shows what it is linked to. The last tab,
+"Full results", is a static copy of the benchmark graphs, table and analysis from the
+[root README](../README.md); it is written into
+[replay.template.html](replay/replay.template.html), so update it there when the README's
+results change. Its graphs are served from [data/plots/](data/plots/).
+
+The page never calls a model. The models' outputs for the 10 puzzles are saved in
+[data/demo_model_outputs.json](data/demo_model_outputs.json); everything after them is rebuilt
+by `build_trace()` in [replay_trace.py](replay/replay_trace.py) on each request. The 10 puzzle
+ids are in [demo_examples.py](replay/demo_examples.py).
+
+All commands are run from the repo root.
+
+**1. Save the model outputs (once).** Only needed again if the puzzle list changes. Needs Ollama
+running with `qwen3:4b-q4_K_M` and `SFT_Extraction_Qwen3_0.6b-v4`.
+
+```
+python logic/replay/save_model_outputs.py
+```
+
+It runs the classifier and the extractor on each puzzle that is not in the file yet (`--all`
+reruns all 10) and checks it against the source run: same predicted puzzle types, Z3 status and
+answer. The file is written only if all 10 match. The classifier is not run at temperature 0,
+so it is retried up to 10 times until it gives the puzzle types recorded in the source run; the
+number of tries is saved in the file. If a puzzle still does not match, run the script again.
+
+**2. Run locally.** No Ollama needed.
+
+```
+python logic/replay/replay_server.py
+```
+
+Opens `http://localhost:8770`. Add `--no-browser` to skip opening a browser. The server binds
+to `127.0.0.1` unless `HOST` is set, and to `PORT` if that is set.
+
+**3. Deploy to Cloud Run.**
+
+```
+gcloud meta list-files-for-upload logic   # show the files that would be uploaded
+bash logic/deploy.sh
+```
+
+[deploy.sh](deploy.sh) builds [Dockerfile](Dockerfile) and deploys it as the `ns-logic-demo`
+service. The image runs the replay server; the chatbox is no longer deployed and runs locally
+only. [.gcloudignore](.gcloudignore) limits the upload to `pipeline/`, `replay/`, the two data
+files the server reads and the graphs in `data/plots/`.
+
+Live extraction is not built. `MODEL_OUTPUTS` in
+[replay_server.py](replay/replay_server.py) is the one switch for where model outputs come
+from (`saved` now, `live` later); a live mode would pass fresh model output to the same
+`build_trace()`.
+
 ## Extra setup for logic
 
 Beyond the shared setup in the [root README](../README.md):

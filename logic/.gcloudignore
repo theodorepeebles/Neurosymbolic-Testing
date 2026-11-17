@@ -5,3 +5,14 @@
 !pipeline/
 !pipeline/**
 pipeline/__pycache__/
+!replay/
+!replay/**
+replay/__pycache__/
+# From data/, only the two files the server reads and the graphs it shows.
+!data/
+data/*
+!data/demo_model_outputs.json
+!data/sft_test.jsonl
+!data/plots/
+data/plots/*
+!data/plots/*.png

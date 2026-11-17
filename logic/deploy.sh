@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build logic/ with Cloud Build and deploy it to Cloud Run.
+# Build logic/ with Cloud Build and deploy the replay demo to Cloud Run.
 set -euo pipefail
 
 # Run from the repo root so --source logic resolves, wherever this script is called from.

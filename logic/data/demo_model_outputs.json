@@ -1,0 +1,226 @@
+{
+ "source_run": "ns__SFT-0.6b-v4__cls-qwen3-4b-q4_K_M.jsonl",
+ "generated_at": "2026-11-17T05:35:37Z",
+ "note": "Real model outputs for the replay demo, written by logic/replay/save_model_outputs.py. Each entry matched the source run's predicted domains, Z3 status and answer.",
+ "examples": [
+  {
+   "problem_id": "9b8a0c74bfb545078e9eda4b3d4ae946",
+   "predicted_domains": [
+    "ordering"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 255,
+    "out_tok": 96,
+    "time_ms": 8810,
+    "attempts": 3
+   },
+   "extraction_raw": "{\"entities\": [\"Thomas\", \"Louise\", \"Ana\", \"Samuel\", \"Orla\", \"Sage\"], \"constraints\": [{\"type\": \"before\", \"left\": \"Thomas\", \"right\": \"Ana\", \"evidence_text\": \"Thomas is before Ana.\"}, {\"type\": \"before\", \"left\": \"Orla\", \"right\": \"Thomas\", \"evidence_text\": \"Orla is before Thomas.\"}, {\"type\": \"before\", \"left\": \"Orla\", \"right\": \"Ana\", \"evidence_text\": \"Orla is before Ana.\"}, {\"type\": \"immediately_before\", \"left\": \"Ana\", \"right\": \"Louise\", \"evidence_text\": \"Ana is immediately before Louise.\"}, {\"type\": \"immediately_before\", \"left\": \"Sage\", \"right\": \"Samuel\", \"evidence_text\": \"Sage is immediately before Samuel.\"}, {\"type\": \"adjacent\", \"left\": \"Orla\", \"right\": \"Sage\", \"evidence_text\": \"Orla and Sage are adjacent.\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"could_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Thomas\", \"slot\": 4, \"evidence_text\": \"Thomas is in slot 4\"}]}, {\"label\": \"B\", \"type\": \"could_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Thomas\", \"slot\": 6, \"evidence_text\": \"Thomas is in slot 6\"}]}]}], \"num_slots\": 6}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 147,
+    "out_tok": 349,
+    "time_ms": 5910,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "4aa1069f1c2242fa98c5cd0431404361",
+   "predicted_domains": [
+    "grouping"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 238,
+    "out_tok": 49,
+    "time_ms": 5520,
+    "attempts": 4
+   },
+   "extraction_raw": "{\"entities\": [\"Rosetta\", \"Brenda\"], \"constraints\": [{\"type\": \"different_group\", \"entities\": [\"Rosetta\", \"Brenda\"], \"evidence_text\": \"Rosetta and Brenda are in different groups.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Rosetta\", \"Brenda\"], \"n\": 1, \"group\": 1, \"evidence_text\": \"Exactly 1 of Rosetta, Brenda are in group 1.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Rosetta\", \"Brenda\"], \"n\": 1, \"group\": 2, \"evidence_text\": \"Exactly 1 of Rosetta, Brenda are in group 2.\"}], \"questions\": [{\"question_constraints\": [{\"type\": \"is_in\", \"entity\": \"Brenda\", \"group\": 2, \"evidence_text\": \"Brenda is in group 2\"}], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"is_in\", \"entity\": \"Rosetta\", \"group\": 1, \"evidence_text\": \"Rosetta is in group 1\"}]}, {\"label\": \"B\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"is_in\", \"entity\": \"Rosetta\", \"group\": 2, \"evidence_text\": \"Rosetta is in group 2\"}]}]}], \"num_groups\": 2}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 130,
+    "out_tok": 318,
+    "time_ms": 5578,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "377f775caa6845a393456005d98bbfc2",
+   "predicted_domains": [
+    "knights_and_knaves"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 330,
+    "out_tok": 77,
+    "time_ms": 7788,
+    "attempts": 1
+   },
+   "extraction_raw": "{\"entities\": [\"Dara\", \"Judith\"], \"constraints\": [{\"type\": \"is_truth_teller\", \"entity\": \"Dara\", \"evidence_text\": \"Dara is a truth-teller (knight).\"}, {\"type\": \"is_deceiver\", \"entity\": \"Judith\", \"evidence_text\": \"Judith is a deceiver (knave).\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Judith\"}, \"consequent\": {\"type\": \"is_deceiver\", \"entity\": \"Dara\"}, \"evidence_text\": \"If Judith is a truth-teller (knight), then Dara is a deceiver (knave).\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Judith\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"is_deceiver\", \"entity\": \"Dara\"}}, \"evidence_text\": \"If Judith is a deceiver (knave), then it is not the case that: Dara is a deceiver (knave).\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Dara\"}, \"consequent\": {\"type\": \"is_deceiver\", \"entity\": \"Judith\"}, \"evidence_text\": \"If Dara is a truth-teller (knight), then Judith is a deceiver (knave).\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Dara\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"is_deceiver\", \"entity\": \"Judith\"}}, \"evidence_text\": \"If Dara is a deceiver (knave), then it is not the case that: Judith is a deceiver (knave).\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"is_deceiver\", \"entity\": \"Judith\", \"evidence_text\": \"Judith is a deceiver (knave)\"}]}, {\"label\": \"B\", \"type\": \"could_be_true\", \"constraints\": [{\"type\": \"is_truth_teller\", \"entity\": \"Judith\", \"evidence_text\": \"Judith is a truth-teller (knight)\"}]}]}]}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 226,
+    "out_tok": 532,
+    "time_ms": 7857,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "98112969763f44beaad54b69634965c1",
+   "predicted_domains": [
+    "ordering",
+    "grouping"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 284,
+    "out_tok": 61,
+    "time_ms": 5692,
+    "attempts": 2
+   },
+   "extraction_raw": "{\"entities\": [\"Reed\", \"Uma\"], \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Uma\", \"slot\": 1, \"evidence_text\": \"Uma is in slot 1.\"}, {\"type\": \"is_in\", \"entity\": \"Reed\", \"group\": 1, \"evidence_text\": \"Reed is in group 1.\"}, {\"type\": \"is_in\", \"entity\": \"Uma\", \"group\": 2, \"evidence_text\": \"Uma is in group 2.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Reed\", \"Uma\"], \"n\": 1, \"group\": 1, \"evidence_text\": \"exactly 1 of [Reed, Uma] are in group 1.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"different_group\", \"entities\": [\"Reed\", \"Uma\"]}, \"consequent\": {\"type\": \"immediately_before\", \"left\": \"Uma\", \"right\": \"Reed\"}, \"evidence_text\": \"If Reed and Uma are in different groups, then Uma is immediately before Reed.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_in\", \"entity\": \"Reed\", \"group\": 1}, \"consequent\": {\"type\": \"before\", \"left\": \"Uma\", \"right\": \"Reed\"}, \"evidence_text\": \"If Reed is in group 1, then Uma is before Reed.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"immediately_before\", \"left\": \"Uma\", \"right\": \"Reed\"}, \"consequent\": {\"type\": \"is_in\", \"entity\": \"Uma\", \"group\": 2}, \"evidence_text\": \"If Uma is immediately before Reed, then Uma is in group 2.\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"could_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Uma\", \"slot\": 1, \"evidence_text\": \"Uma is in slot 1\"}]}, {\"label\": \"B\", \"type\": \"could_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Uma\", \"slot\": 2, \"evidence_text\": \"Uma is in slot 2\"}]}]}], \"num_slots\": 2, \"num_groups\": 2}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 178,
+    "out_tok": 544,
+    "time_ms": 8313,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "9c3be010ea734d5499d09ac3ae2ba8a7",
+   "predicted_domains": [
+    "ordering",
+    "grouping"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 374,
+    "out_tok": 88,
+    "time_ms": 7790,
+    "attempts": 2
+   },
+   "extraction_raw": "{\"entities\": [\"Ivan\", \"Frank\", \"Ronald\", \"Joseph\", \"Vernon\", \"Donna\"], \"constraints\": [{\"type\": \"exactly_n\", \"entities\": [\"Ivan\", \"Ronald\", \"Donna\"], \"n\": 2, \"group\": 3, \"evidence_text\": \"Exactly 2 of [Ivan, Ronald, Donna] are in group 3.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Frank\", \"Ivan\", \"Vernon\", \"Donna\"], \"n\": 1, \"group\": 2, \"evidence_text\": \"Exactly 1 of [Frank, Ivan, Vernon, Donna] are in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"exactly_n\", \"entities\": [\"Ivan\", \"Joseph\", \"Vernon\", \"Donna\"], \"n\": 3, \"group\": 3}, \"consequent\": {\"type\": \"exactly_n\", \"entities\": [\"Frank\", \"Ronald\", \"Donna\"], \"n\": 2, \"group\": 3}, \"evidence_text\": \"If exactly 3 of [Ivan, Joseph, Vernon, Donna] are in group 3, then exactly 2 of [Frank, Ronald, Donna] are in group 3.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"exactly_n\", \"entities\": [\"Frank\", \"Ivan\", \"Joseph\", \"Ronald\", \"Vernon\", \"Donna\"], \"n\": 1, \"group\": 2}, \"consequent\": {\"type\": \"immediately_before\", \"left\": \"Frank\", \"right\": \"Ronald\"}, \"evidence_text\": \"If exactly 1 of [Frank, Ivan, Joseph, Ronald, Vernon, Donna] are in group 2, then Frank is immediately before Ronald.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"adjacent\", \"left\": \"Joseph\", \"right\": \"Donna\"}, \"consequent\": {\"type\": \"exactly_n\", \"entities\": [\"Ivan\", \"Joseph\", \"Ronald\"], \"n\": 1, \"group\": 2}, \"evidence_text\": \"If Joseph and Donna are adjacent, then exactly 1 of [Ivan, Joseph, Ronald] are in group 2.\"}], \"questions\": [{\"question_constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Ivan\", \"slot\": 3, \"evidence_text\": \"Ivan is in slot 3\"}], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Vernon\", \"slot\": 5, \"evidence_text\": \"Vernon is in slot 5\"}]}, {\"label\": \"B\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Vernon\", \"slot\": 1, \"evidence_text\": \"Vernon is in slot 1\"}]}, {\"label\": \"C\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Vernon\", \"slot\": 2, \"evidence_text\": \"Vernon is in slot 2\"}]}, {\"label\": \"D\", \"type\": \"could_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Vernon\", \"slot\": 6, \"evidence_text\": \"Vernon is in slot 6\"}]}]}], \"num_slots\": 6, \"num_groups\": 3}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 268,
+    "out_tok": 792,
+    "time_ms": 11007,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "762c10e188b44379b0d358910ed1eb60",
+   "predicted_domains": [
+    "ordering",
+    "knights_and_knaves"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 347,
+    "out_tok": 120,
+    "time_ms": 10378,
+    "attempts": 1
+   },
+   "extraction_raw": "{\"entities\": [\"Donald\", \"Lena\", \"Mary\", \"Gretchen\", \"Juno\"], \"constraints\": [{\"type\": \"before\", \"left\": \"Lena\", \"right\": \"Juno\", \"evidence_text\": \"Lena is before Juno.\"}, {\"type\": \"immediately_before\", \"left\": \"Mary\", \"right\": \"Juno\", \"evidence_text\": \"Mary is immediately before Juno.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"immediately_before\", \"left\": \"Gretchen\", \"right\": \"Donald\"}, \"consequent\": {\"type\": \"is_truth_teller\", \"entity\": \"Lena\"}, \"evidence_text\": \"If Gretchen is immediately before Donald, then Lena is a knight.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Lena\"}, \"consequent\": {\"type\": \"adjacent\", \"left\": \"Mary\", \"right\": \"Juno\"}, \"evidence_text\": \"If Lena is a knight, then Mary and Juno are adjacent.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Lena\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"adjacent\", \"left\": \"Mary\", \"right\": \"Juno\"}}, \"evidence_text\": \"If Lena is a knave, then it is not the case that Mary and Juno are adjacent.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Juno\"}, \"consequent\": {\"type\": \"immediately_before\", \"left\": \"Donald\", \"right\": \"Lena\"}, \"evidence_text\": \"If Juno is a knight, then Donald is immediately before Lena.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Juno\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"immediately_before\", \"left\": \"Donald\", \"right\": \"Lena\"}}, \"evidence_text\": \"If Juno is a knave, then it is not the case that Donald is immediately before Lena.\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Donald\", \"slot\": 4, \"evidence_text\": \"Donald is in slot 4\"}]}, {\"label\": \"B\", \"type\": \"could_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Donald\", \"slot\": 5, \"evidence_text\": \"Donald is in slot 5\"}]}, {\"label\": \"C\", \"type\": \"must_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Donald\", \"slot\": 1, \"evidence_text\": \"Donald is in slot 1\"}]}]}], \"num_slots\": 5}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 245,
+    "out_tok": 667,
+    "time_ms": 9558,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "7ea3b58227244f7ca2fdec9c68415fd4",
+   "predicted_domains": [
+    "knights_and_knaves",
+    "grouping"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 378,
+    "out_tok": 87,
+    "time_ms": 8303,
+    "attempts": 1
+   },
+   "extraction_raw": "{\"entities\": [\"Tara\", \"Tammy\"], \"constraints\": [{\"type\": \"exactly_n\", \"entities\": [\"Tara\", \"Tammy\"], \"n\": 1, \"group\": 1}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Tammy\"}, \"consequent\": {\"type\": \"exactly_n\", \"entities\": [\"Tara\", \"Tammy\"], \"n\": 1, \"group\": 2}, \"evidence_text\": \"If Tammy is a deceiver (knave), then exactly 1 of [Tara, Tammy] are in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Tammy\"}, \"consequent\": {\"type\": \"is_in\", \"entity\": \"Tammy\", \"group\": 2}, \"evidence_text\": \"If Tammy is a deceiver (knave), then Tammy is in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Tara\"}, \"consequent\": {\"type\": \"is_in\", \"entity\": \"Tara\", \"group\": 2}, \"evidence_text\": \"If Tara is a truth-teller (knight), then Tara is in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Tara\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"is_in\", \"entity\": \"Tara\", \"group\": 2}}, \"evidence_text\": \"If Tara is a deceiver (knave), then it is not the case that: Tara is in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Tammy\"}, \"consequent\": {\"type\": \"is_truth_teller\", \"entity\": \"Tara\"}, \"evidence_text\": \"If Tammy is a truth-teller (knight), then Tara is a truth-teller (knight).\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Tammy\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"is_truth_teller\", \"entity\": \"Tara\"}}, \"evidence_text\": \"If Tammy is a deceiver (knave), then it is not the case that: Tara is a truth-teller (knight).\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"could_be_false\", \"constraints\": [{\"type\": \"is_deceiver\", \"entity\": \"Tara\", \"evidence_text\": \"Tara is a deceiver (knave)\"}]}, {\"label\": \"B\", \"type\": \"must_be_false\", \"constraints\": [{\"type\": \"is_truth_teller\", \"entity\": \"Tara\", \"evidence_text\": \"Tara is a truth-teller (knight)\"}]}]}], \"num_groups\": 2}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 276,
+    "out_tok": 687,
+    "time_ms": 9851,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "51a6632a11874c14aa82061e41f867e9",
+   "predicted_domains": [
+    "ordering",
+    "knights_and_knaves",
+    "grouping"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 422,
+    "out_tok": 16,
+    "time_ms": 3253,
+    "attempts": 3
+   },
+   "extraction_raw": "{\"entities\": [\"Uma\", \"Luther\", \"Victor\"], \"constraints\": [{\"type\": \"immediately_before\", \"left\": \"Luther\", \"right\": \"Victor\", \"evidence_text\": \"Luther is immediately before Victor.\"}, {\"type\": \"is_truth_teller\", \"entity\": \"Uma\", \"evidence_text\": \"Uma is a truth-teller (knight).\"}, {\"type\": \"is_deceiver\", \"entity\": \"Luther\", \"evidence_text\": \"Luther is a deceiver (knave).\"}, {\"type\": \"is_deceiver\", \"entity\": \"Victor\", \"evidence_text\": \"Victor is a deceiver (knave).\"}, {\"type\": \"different_group\", \"entities\": [\"Uma\", \"Luther\"], \"evidence_text\": \"Uma and Luther are in different groups.\"}, {\"type\": \"is_in\", \"entity\": \"Victor\", \"group\": 3, \"evidence_text\": \"Victor is in group 3.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Uma\", \"Luther\", \"Victor\"], \"n\": 1, \"group\": 3, \"evidence_text\": \"exactly 1 of [Uma, Luther, Victor] are in group 3.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"different_group\", \"entities\": [\"Luther\", \"Victor\"]}, \"consequent\": {\"type\": \"slot_fixed\", \"entity\": \"Victor\", \"slot\": 2}, \"evidence_text\": \"If Luther and Victor are in different groups, then Victor is in slot 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"slot_fixed\", \"entity\": \"Victor\", \"slot\": 2}, \"consequent\": {\"type\": \"is_in\", \"entity\": \"Luther\", \"group\": 2}, \"evidence_text\": \"If Victor is in slot 2, then Luther is in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Luther\"}, \"consequent\": {\"type\": \"before\", \"left\": \"Uma\", \"right\": \"Victor\"}, \"evidence_text\": \"If Luther is a truth-teller (knight), then Uma is before Victor.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Luther\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"before\", \"left\": \"Uma\", \"right\": \"Victor\"}}, \"evidence_text\": \"If Luther is a deceiver (knave), then it is not the case that: Uma is before Victor.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Uma\"}, \"consequent\": {\"type\": \"is_in\", \"entity\": \"Luther\", \"group\": 2}, \"evidence_text\": \"If Uma is a truth-teller (knight), then Luther is in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Uma\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"is_in\", \"entity\": \"Luther\", \"group\": 2}}, \"evidence_text\": \"If Uma is a deceiver (knave), then it is not the case that: Luther is in group 2.\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Luther\", \"slot\": 2, \"evidence_text\": \"Luther is in slot 2\"}]}, {\"label\": \"B\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Luther\", \"slot\": 3, \"evidence_text\": \"Luther is in slot 3\"}]}, {\"label\": \"C\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Luther\", \"slot\": 1, \"evidence_text\": \"Luther is in slot 1\"}]}]}], \"num_slots\": 3, \"num_groups\": 3}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 322,
+    "out_tok": 962,
+    "time_ms": 13009,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "3470c07b758b4cbbb9f77b25c6a6ff3a",
+   "predicted_domains": [
+    "knights_and_knaves",
+    "grouping",
+    "ordering"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 378,
+    "out_tok": 55,
+    "time_ms": 5415,
+    "attempts": 6
+   },
+   "extraction_raw": "{\"entities\": [\"Aria\", \"Theo\", \"Victor\", \"Brad\"], \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Theo\", \"slot\": 2, \"evidence_text\": \"Theo is in group 2.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Aria\", \"Theo\", \"Brad\"], \"n\": 1, \"group\": 3, \"evidence_text\": \"Exactly 1 of Aria, Theo, and Brad are in group 3.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Aria\", \"Victor\", \"Brad\"], \"n\": 1, \"group\": 1, \"evidence_text\": \"Exactly 1 of Aria, Victor, and Brad are in group 1.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Aria\", \"Theo\", \"Victor\", \"Brad\"], \"n\": 2, \"group\": 2, \"evidence_text\": \"Exactly 2 of Aria, Theo, Victor, and Brad are in group 2.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Victor\"}, \"consequent\": {\"type\": \"different_group\", \"entities\": [\"Aria\", \"Victor\"]}, \"evidence_text\": \"If Victor is a knight, then Aria and Victor are in different groups.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Victor\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"different_group\", \"entities\": [\"Aria\", \"Victor\"]}}, \"evidence_text\": \"If Victor is a knave, then it is not the case that: Aria and Victor are in different groups.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Theo\"}, \"consequent\": {\"type\": \"same_group\", \"entities\": [\"Victor\", \"Brad\"]}, \"evidence_text\": \"If Theo is a knight, then Victor and Brad are in the same group.\"}, {\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_deceiver\", \"entity\": \"Theo\"}, \"consequent\": {\"type\": \"not\", \"claim\": {\"type\": \"same_group\", \"entities\": [\"Victor\", \"Brad\"]}}, \"evidence_text\": \"If Theo is a knave, then it is not the case that: Victor and Brad are in the same group.\"}], \"questions\": [{\"question_constraints\": [{\"type\": \"if_then\", \"antecedent\": {\"type\": \"is_truth_teller\", \"entity\": \"Victor\"}, \"consequent\": {\"type\": \"exactly_n\", \"entities\": [\"Aria\", \"Theo\", \"Victor\", \"Brad\"], \"n\": 2, \"group\": 2}, \"evidence_text\": \"if Victor is a knight, then exactly 2 of Aria, Theo, Victor, and Brad are in group 2\"}], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"is_in\", \"entity\": \"Theo\", \"group\": 3, \"evidence_text\": \"Theo is in group 3\"}]}, {\"label\": \"B\", \"type\": \"must_be_true\", \"constraints\": [{\"type\": \"is_in\", \"entity\": \"Theo\", \"group\": 2, \"evidence_text\": \"Theo is in group 2\"}]}]}], \"num_groups\": 3, \"num_slots\": 4}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 278,
+    "out_tok": 797,
+    "time_ms": 11246,
+    "llm_calls": 1
+   }
+  },
+  {
+   "problem_id": "d969d4b1162343f4882c990a12fd2c40",
+   "predicted_domains": [
+    "grouping",
+    "ordering"
+   ],
+   "classifier": {
+    "model": "qwen3:4b-q4_K_M",
+    "in_tok": 258,
+    "out_tok": 61,
+    "time_ms": 5781,
+    "attempts": 1
+   },
+   "extraction_raw": "{\"entities\": [\"Leslie\", \"Eugene\", \"Mona\", \"Eleanor\", \"Michael\", \"Norman\"], \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Eleanor\", \"slot\": 3, \"evidence_text\": \"Eleanor is in group 3.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Eugene\", \"Eleanor\", \"Norman\"], \"n\": 2, \"group\": 3, \"evidence_text\": \"exactly 2 of [Eugene, Eleanor, Norman] are in group 3.\"}, {\"type\": \"exactly_n\", \"entities\": [\"Mona\", \"Eleanor\", \"Michael\", \"Norman\"], \"n\": 3, \"group\": 3, \"evidence_text\": \"exactly 3 of [Mona, Eleanor, Michael, Norman] are in group 3.\"}], \"questions\": [{\"question_constraints\": [], \"answer_choices\": [{\"label\": \"A\", \"type\": \"must_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Eugene\", \"slot\": 3, \"evidence_text\": \"Eugene is in group 3\"}]}, {\"label\": \"B\", \"type\": \"could_be_false\", \"constraints\": [{\"type\": \"slot_fixed\", \"entity\": \"Eugene\", \"slot\": 2, \"evidence_text\": \"Eugene is in group 2\"}]}]}], \"num_groups\": 3, \"num_slots\": 6}",
+   "extraction": {
+    "model": "SFT_Extraction_Qwen3_0.6b-v4",
+    "in_tok": 152,
+    "out_tok": 331,
+    "time_ms": 5937,
+    "llm_calls": 1
+   }
+  }
+ ]
+}
