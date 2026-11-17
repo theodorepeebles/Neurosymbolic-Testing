@@ -32,10 +32,15 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import requests
+from dotenv import load_dotenv
+
+# Optional local .env (see logic/.env.example). Must run before the project imports below,
+# since pipeline reads OLLAMA_URL at import time. In the cloud there's no .env, so it's a no-op.
+load_dotenv()
 
 import repl
 import explanation
-from pipeline import classify_domains, extract_logic_problem, z3_solve, format_constraint
+from pipeline import classify_domains, extract_logic_problem, z3_solve, format_constraint, OLLAMA_URL
 from validators import build_hybrid_schema
 from explanation_debug import fetch_run, _loads, pick_random_run_id, DEFAULT_DB
 
@@ -55,7 +60,6 @@ CLASSIFIER_MODEL = repl.FREETEXT_MODEL  # qwen3:8b
 # stay enum-locked so validity is unchanged). We stream that call and peel out the reasoning field.
 # Set False to skip the trace and use the plain constrained repl.parse_freetext.
 SHOW_THINKING = True
-OLLAMA_URL = "http://localhost:11434/api/generate"
 THINKING_SYSTEM_SUFFIX = (
     "\n\nFirst use the \"reasoning\" field to briefly think through which variable, value, and "
     "query_type the question maps to; then fill query_type, variable, and value."
@@ -331,7 +335,7 @@ def stream_ask(question: str, ctx, lp, emit_thinking):
     }
     buf, r_start, emitted, closed = "", None, 0, False
     try:
-        resp = requests.post(OLLAMA_URL, json=body, timeout=180, stream=True)
+        resp = requests.post(f"{OLLAMA_URL}/api/generate", json=body, timeout=180, stream=True)
         resp.raise_for_status()
         for line in resp.iter_lines():
             if not line:
@@ -486,13 +490,16 @@ def _find_port(start: int = 8765, tries: int = 25) -> int:
 def main():
     if not os.path.isfile(TEMPLATE):
         sys.exit(f"Template not found: {TEMPLATE}")
-    port = _find_port()
+    # Defaults keep local runs unchanged; Cloud Run sets PORT, and deploy.sh sets HOST=0.0.0.0.
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ["PORT"]) if os.environ.get("PORT") else _find_port()
     url = f"http://localhost:{port}/"
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    print(f"NS Chatbox serving at {url}  (Ctrl-C to stop)")
+    print(f"NS Chatbox serving at {url}  (host {host}, Ctrl-C to stop)")
     print(f"Model: {repl.FREETEXT_MODEL}   DB: {os.path.normpath(DEFAULT_DB)}")
-    webbrowser.open(url)
+    if host == "127.0.0.1":
+        webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

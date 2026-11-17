@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import time
@@ -11,6 +12,9 @@ from prompts import (
     BASELINE_LOGIC_SYSTEM,
     build_extraction_prompt,
 )
+
+# Base URL of the Ollama server; endpoints like /api/generate are appended where it's called.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
 
 def new_usage() -> dict:
@@ -48,7 +52,7 @@ def ask_llm(prompt: str, system: str, model: str, fmt: str | None = None, think:
         body["format"] = fmt
         
     try:
-        response = requests.post("http://localhost:11434/api/generate", json=body, timeout=timeout)
+        response = requests.post(f"{OLLAMA_URL}/api/generate", json=body, timeout=timeout)
 
         # This forces an exception if Ollama returns a 500 Internal Server Error
         response.raise_for_status()
