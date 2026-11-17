@@ -1,0 +1,6 @@
+requests==2.34.2
+z3-solver==4.16.0.0
+pydantic==2.14.3
+rank-bm25==0.2.2
+numpy==2.5.4
+python-dotenv==1.2.4
