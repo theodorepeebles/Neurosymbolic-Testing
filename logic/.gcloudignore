@@ -1,0 +1,7 @@
+# Allowlist: upload only what the Dockerfile uses. Keep in sync with the Dockerfile.
+*
+!Dockerfile
+!requirements-deploy.txt
+!pipeline/
+!pipeline/**
+pipeline/__pycache__/
