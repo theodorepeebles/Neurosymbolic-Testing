@@ -93,7 +93,7 @@ Output tokens per problem, thinking included:
 
 ## Reproduce the results
 
-> **The fine-tuned model is not on GitHub.** The `SFT_Extraction_Qwen3_0.6b-v4` weights (~610 MB) are excluded from this repo. A fresh clone can rerun the baselines and rebuild every graph and table from the saved results in [logic/data/demo_runs/](logic/data/demo_runs/). To rerun the pipeline itself, you first need to retrain the model with [NS_training.ipynb](logic/pipeline/NS_training.ipynb), then import the GGUF file it writes into Ollama under the name the code expects: `ollama create SFT_Extraction_Qwen3_0.6b-v4 -f Modelfile`, with a Modelfile whose `FROM` line points at the GGUF.
+> **The fine-tuned model is not on GitHub.** The `SFT_Extraction_Qwen3_0.6b-v4` weights (~610 MB) are excluded from this repo. A fresh clone can rerun the baselines and rebuild every graph and table from the saved results in [logic/data/demo_runs/](logic/data/demo_runs/). To rerun the pipeline itself, you first need to retrain the model with [NS_training.ipynb](logic/pipeline/NS_training.ipynb) on Colab (its packages are listed in [training-requirements.txt](training-requirements.txt)), then import the GGUF file it writes into Ollama under the name the code expects: `ollama create SFT_Extraction_Qwen3_0.6b-v4 -f Modelfile`, with a Modelfile whose `FROM` line points at the GGUF.
 
 Requires Python 3.12 and [Ollama](https://ollama.com) running locally: every model call goes through it. The baselines are Ollama Cloud models, so sign in with `ollama signin`. The pipeline's classifier needs `ollama pull qwen3:4b-q4_K_M`.
 
